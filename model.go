@@ -302,19 +302,39 @@ func (m *Model) View() string {
 	}
 	
 	// Require minimum terminal size
-	if m.width < 80 || m.height < 24 {
-		return fmt.Sprintf("Terminal too small! Current: %dx%d, Required: 80x24", m.width, m.height)
+	if m.width < 80 || m.height < 20 {
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("9")).
+			Bold(true).
+			Padding(2).
+			Align(lipgloss.Center)
+		return errorStyle.Render(fmt.Sprintf(
+			"Terminal too small!\nCurrent: %dx%d\nRequired: 80x20 minimum",
+			m.width, m.height))
 	}
 	
-	// Fixed layout: left panel 30 chars, right panel takes the rest
-	leftWidth := 30
+	// Responsive layout: 30% left, 70% right (with minimum widths)
+	leftWidth := m.width * 30 / 100
+	if leftWidth < 25 {
+		leftWidth = 25
+	}
+	if leftWidth > 40 {
+		leftWidth = 40
+	}
 	rightWidth := m.width - leftWidth
 	
-	leftPanel := m.renderSimpleLeftPanel(leftWidth)
-	rightPanel := m.renderSimpleRightPanel(rightWidth)
+	// Render header
+	header := m.renderHeader()
 	
-	// Simple side-by-side join
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	// Render panels
+	leftPanel := m.renderFancyLeftPanel(leftWidth)
+	rightPanel := m.renderFancyRightPanel(rightWidth)
+	
+	// Join panels horizontally
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	
+	// Combine header and content
+	return lipgloss.JoinVertical(lipgloss.Left, header, mainContent)
 }
 
 func (m *Model) renderSimpleLeftPanel(width int) string {
@@ -490,6 +510,310 @@ func (m *Model) wrapText(text string, width int) []string {
 	}
 	
 	return lines
+}
+
+func (m *Model) renderHeader() string {
+	// Header style
+	headerStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("238")).
+		Foreground(lipgloss.Color("252")).
+		Padding(0, 1)
+	
+	// Title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("117"))
+	title := titleStyle.Render("Panam Log Viewer")
+	
+	// Status info
+	liveIndicator := "●"
+	if len(m.entries) > 0 {
+		liveIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("46")).Render("●")
+	}
+	
+	status := fmt.Sprintf("Lines: %d/%d | Live %s",
+		len(m.filteredEntries), m.config.MaxLines, liveIndicator)
+	
+	// Calculate padding
+	padding := m.width - lipgloss.Width(title) - lipgloss.Width(status) - 4
+	if padding < 0 {
+		padding = 0
+	}
+	
+	// Combine
+	header := fmt.Sprintf("%s%s%s", title, strings.Repeat(" ", padding), status)
+	
+	return headerStyle.Width(m.width).Render(header)
+}
+
+func (m *Model) renderFancyLeftPanel(width int) string {
+	// Panel styles
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Width(width - 2).
+		Height(m.height - 3)
+	
+	if m.focus == LeftPanel {
+		panelStyle = panelStyle.BorderForeground(lipgloss.Color("117"))
+	}
+	
+	// Title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("117")).
+		MarginBottom(1)
+	
+	content := titleStyle.Render("🔍 SEARCH & FILTERS") + "\n"
+	
+	// Include pattern
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	inputStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("235")).
+		Padding(0, 1).
+		Width(width - 6)
+	
+	content += labelStyle.Render("Include Pattern:") + "\n"
+	includeValue := m.includeInput.Value()
+	if includeValue == "" {
+		includeValue = "Type to filter..."
+	}
+	if m.activeInput == &m.includeInput {
+		content += m.includeInput.View() + "\n"
+	} else {
+		content += inputStyle.Render(includeValue) + "\n"
+	}
+	content += "\n"
+	
+	// Exclude pattern
+	content += labelStyle.Render("Exclude Pattern:") + "\n"
+	excludeValue := m.excludeInput.Value()
+	if excludeValue == "" {
+		excludeValue = "Type to exclude..."
+	}
+	if m.activeInput == &m.excludeInput {
+		content += m.excludeInput.View() + "\n"
+	} else {
+		content += inputStyle.Render(excludeValue) + "\n"
+	}
+	content += "\n"
+	
+	// Log levels
+	content += labelStyle.Render("Log Levels:") + "\n"
+	
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	debugStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	
+	checkbox := func(checked bool) string {
+		if checked {
+			return "[✓]"
+		}
+		return "[ ]"
+	}
+	
+	content += fmt.Sprintf("  %s %s  %s %s\n",
+		checkbox(m.showError), errorStyle.Render("ERROR"),
+		checkbox(m.showWarn), warnStyle.Render("WARN"))
+	content += fmt.Sprintf("  %s %s   %s %s\n",
+		checkbox(m.showInfo), infoStyle.Render("INFO"),
+		checkbox(m.showDebug), debugStyle.Render("DEBUG"))
+	content += "\n"
+	
+	// Filter statistics
+	statsStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("243")).
+		MarginTop(1)
+	
+	efficiency := 100.0
+	if len(m.entries) > 0 {
+		efficiency = float64(len(m.filteredEntries)) / float64(len(m.entries)) * 100
+	}
+	
+	stats := fmt.Sprintf("📊 Statistics:\n  Total: %d logs\n  Shown: %d logs\n  Efficiency: %.1f%%",
+		len(m.entries), len(m.filteredEntries), efficiency)
+	
+	content += statsStyle.Render(stats)
+	
+	return panelStyle.Render(content)
+}
+
+func (m *Model) renderFancyRightPanel(width int) string {
+	// Panel styles
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Width(width - 2).
+		Height(m.height - 3)
+	
+	if m.focus == RightPanel {
+		panelStyle = panelStyle.BorderForeground(lipgloss.Color("117"))
+	}
+	
+	// Title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("117")).
+		MarginBottom(1)
+	
+	var content strings.Builder
+	content.WriteString(titleStyle.Render("📜 LOG STREAM"))
+	
+	if len(m.filteredEntries) > 0 {
+		content.WriteString(fmt.Sprintf(" (%d/%d)", m.selectedIdx+1, len(m.filteredEntries)))
+	}
+	content.WriteString("\n")
+	
+	// Calculate available height for logs
+	availableHeight := m.height - 8 // Account for borders, title, footer
+	
+	if m.viewMode == DetailView && m.selectedIdx < len(m.filteredEntries) {
+		// Detail view
+		content.WriteString(m.renderDetailContent(m.filteredEntries[m.selectedIdx], width-4))
+	} else {
+		// List view
+		for i := m.scrollOffset; i < m.scrollOffset+availableHeight && i < len(m.filteredEntries); i++ {
+			if i < 0 || i >= len(m.filteredEntries) {
+				continue
+			}
+			
+			entry := m.filteredEntries[i]
+			line := m.formatFancyLogEntry(entry, width-4)
+			
+			if i == m.selectedIdx {
+				selectedStyle := lipgloss.NewStyle().
+					Background(lipgloss.Color("237")).
+					Foreground(lipgloss.Color("117"))
+				line = selectedStyle.Render("▶ " + line)
+			} else {
+				line = "  " + line
+			}
+			
+			content.WriteString(line + "\n")
+		}
+		
+		if len(m.filteredEntries) == 0 {
+			noDataStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("243")).
+				Italic(true)
+			content.WriteString("\n" + noDataStyle.Render("No log entries match current filters..."))
+		}
+	}
+	
+	// Footer with shortcuts
+	footerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("243")).
+		MarginTop(1)
+	
+	shortcuts := "j/k=Navigate | Enter=Details | i=Include | e=Exclude | Tab=Switch | q=Quit"
+	if m.viewMode == DetailView {
+		shortcuts = "ESC=Back to list | q=Quit"
+	}
+	
+	// Pad content to fill height
+	lines := strings.Split(content.String(), "\n")
+	for len(lines) < m.height-5 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, footerStyle.Render(shortcuts))
+	
+	return panelStyle.Render(strings.Join(lines, "\n"))
+}
+
+func (m *Model) formatFancyLogEntry(entry LogEntry, width int) string {
+	// Level styles
+	levelStyle := lipgloss.NewStyle()
+	levelText := fmt.Sprintf("[%s]", entry.Level.String())
+	
+	switch entry.Level {
+	case ERROR:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("196"))
+	case WARN:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("214"))
+	case INFO:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("117"))
+	case DEBUG:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("243"))
+	}
+	
+	// Format timestamp
+	timeStr := entry.Timestamp
+	if len(timeStr) > 8 {
+		timeStr = timeStr[11:19] // Extract HH:MM:SS
+	}
+	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	
+	// Format source
+	source := entry.Source
+	if source == "" {
+		source = "app"
+	}
+	if len(source) > 12 {
+		source = source[:12]
+	}
+	sourceStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	
+	// Format message
+	message := entry.Message
+	maxMsgLen := width - 30 // Account for time, level, source
+	if len(message) > maxMsgLen && maxMsgLen > 0 {
+		message = message[:maxMsgLen-3] + "..."
+	}
+	
+	// Add duration if available
+	if entry.Metadata != nil {
+		if duration, ok := entry.Metadata["duration_ms"]; ok {
+			durationStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
+			message += " " + durationStyle.Render(fmt.Sprintf("(%vms)", duration))
+		}
+	}
+	
+	return fmt.Sprintf("%s %s %s: %s",
+		timeStyle.Render(timeStr),
+		levelStyle.Render(levelText),
+		sourceStyle.Render(source),
+		message)
+}
+
+func (m *Model) renderDetailContent(entry LogEntry, width int) string {
+	var content strings.Builder
+	
+	// Styles
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("243")).
+		Bold(true)
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+	
+	content.WriteString("\n")
+	content.WriteString(labelStyle.Render("Timestamp:") + " " + valueStyle.Render(entry.Timestamp) + "\n")
+	content.WriteString(labelStyle.Render("Level:") + " " + valueStyle.Render(entry.Level.String()) + "\n")
+	content.WriteString(labelStyle.Render("Source:") + " " + valueStyle.Render(entry.Source) + "\n")
+	content.WriteString("\n")
+	content.WriteString(labelStyle.Render("Message:") + "\n")
+	
+	// Wrap message
+	messageStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(1).
+		Width(width - 2)
+	
+	content.WriteString(messageStyle.Render(entry.Message))
+	
+	// Metadata if available
+	if entry.Metadata != nil && len(entry.Metadata) > 0 {
+		content.WriteString("\n\n")
+		content.WriteString(labelStyle.Render("Metadata:") + "\n")
+		for key, value := range entry.Metadata {
+			content.WriteString(fmt.Sprintf("  %s: %v\n", key, value))
+		}
+	}
+	
+	return content.String()
 }
 
 func (m *Model) renderLeftPanelWithWidth(panelWidth int) string {
