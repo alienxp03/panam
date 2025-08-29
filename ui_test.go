@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbletea"
 )
 
-func TestUI_HotkeyNavigation(t *testing.T) {
+func TestUI_LeftPanelNavigation(t *testing.T) {
 	config := &Config{
 		MaxLines:    100,
 		Files:       []string{},
@@ -18,29 +18,56 @@ func TestUI_HotkeyNavigation(t *testing.T) {
 	
 	model := NewModel(config)
 	
-	// Test 'i' key should focus include input
-	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	// Test Tab navigation between panels
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\t'}})
 	m := updatedModel.(*Model)
 	
 	if m.focus != LeftPanel {
-		t.Error("Expected focus to be on LeftPanel after pressing 'i'")
+		t.Errorf("Expected focus to be LeftPanel after Tab, got %v", m.focus)
+	}
+	
+	if m.leftPanelItem != 0 {
+		t.Errorf("Expected leftPanelItem to be 0, got %d", m.leftPanelItem)
+	}
+	
+	// Test 'i' key enters edit mode on include field (item 0)
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = updatedModel.(*Model)
+	
+	if !m.editMode {
+		t.Error("Expected editMode to be true after pressing 'i' on include field")
 	}
 	
 	if m.activeInput != &m.includeInput {
-		t.Error("Expected activeInput to be includeInput after pressing 'i'")
+		t.Error("Expected activeInput to be includeInput")
 	}
 	
-	// Test 'e' key should focus exclude input
-	model = NewModel(config)
-	updatedModel, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	// Test ESC exits edit mode
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{27}}) // ESC key
 	m = updatedModel.(*Model)
 	
-	if m.focus != LeftPanel {
-		t.Error("Expected focus to be on LeftPanel after pressing 'e'")
+	if m.editMode {
+		t.Error("Expected editMode to be false after pressing ESC")
+	}
+	
+	// Test navigation with j/k keys
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updatedModel.(*Model)
+	
+	if m.leftPanelItem != 1 {
+		t.Errorf("Expected leftPanelItem to be 1 after 'j', got %d", m.leftPanelItem)
+	}
+	
+	// Test 'i' on exclude field
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = updatedModel.(*Model)
+	
+	if !m.editMode {
+		t.Error("Expected editMode to be true after pressing 'i' on exclude field")
 	}
 	
 	if m.activeInput != &m.excludeInput {
-		t.Error("Expected activeInput to be excludeInput after pressing 'e'")
+		t.Error("Expected activeInput to be excludeInput")
 	}
 }
 

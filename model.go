@@ -44,6 +44,10 @@ type Model struct {
 	includeInput textinput.Model
 	excludeInput textinput.Model
 	activeInput  *textinput.Model
+	
+	// Left panel navigation
+	leftPanelItem int  // 0=include, 1=exclude, 2-5=log levels
+	editMode      bool // true when editing text fields
 
 	// Log level filters
 	showDebug bool
@@ -156,20 +160,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Handle input mode
-		if m.activeInput != nil {
+		// Handle edit mode for text inputs
+		if m.editMode && m.activeInput != nil {
 			switch msg.String() {
 			case "esc":
 				m.activeInput.Blur()
 				m.activeInput = nil
-				m.focus = RightPanel
+				m.editMode = false
+				// Stay in left panel but exit edit mode
 				return m, nil
 			case "enter":
 				m.activeInput.Blur()
 				m.activeInput = nil
-				m.focus = RightPanel
-				m.applyFilters()
+				m.editMode = false
+				m.applyFilters() // Apply filters in real-time
 				return m, nil
+			default:
+				// Pass through to text input for typing
+				var cmd tea.Cmd
+				*m.activeInput, cmd = m.activeInput.Update(msg)
+				// Apply filters on each keystroke for real-time update
+				m.applyFilters()
+				return m, cmd
 			}
 		}
 
@@ -182,31 +194,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.focus = RightPanel
 			} else {
 				m.focus = LeftPanel
+				m.leftPanelItem = 0 // Reset to first item
 			}
-			return m, nil
-
-		case "i":
-			m.focus = LeftPanel
-			m.includeInput.Focus()
-			m.activeInput = &m.includeInput
-			return m, nil
-
-		case "e":
-			m.focus = LeftPanel
-			m.excludeInput.Focus()
-			m.activeInput = &m.excludeInput
-			return m, nil
-
-		case "/":
-			m.focus = LeftPanel
-			m.includeInput.Focus()
-			m.activeInput = &m.includeInput
-			return m, nil
-
-		case "\\":
-			m.focus = LeftPanel
-			m.excludeInput.Focus()
-			m.activeInput = &m.excludeInput
 			return m, nil
 
 		case "c":
@@ -234,31 +223,60 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Update active input
-	if m.activeInput != nil {
-		var cmd tea.Cmd
-		*m.activeInput, cmd = m.activeInput.Update(msg)
-		cmds = append(cmds, cmd)
-
-		// Apply filters when input changes (but not on every keystroke for performance)
-		// We'll apply on enter/esc instead
-	} else if m.focus == LeftPanel {
-		// Update both inputs when not actively editing but in left panel
-		var cmd tea.Cmd
-		m.includeInput, cmd = m.includeInput.Update(msg)
-		cmds = append(cmds, cmd)
-
-		m.excludeInput, cmd = m.excludeInput.Update(msg)
-		cmds = append(cmds, cmd)
-	}
+	// Don't update inputs here - it's handled in the edit mode section above
 
 	return m, tea.Batch(cmds...)
 }
 
 func (m *Model) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "up", "k":
+		if m.leftPanelItem > 0 {
+			m.leftPanelItem--
+		}
+		return m, nil
+		
+	case "down", "j":
+		if m.leftPanelItem < 5 { // 0-1 for text fields, 2-5 for log levels
+			m.leftPanelItem++
+		}
+		return m, nil
+		
+	case "i":
+		// Enter edit mode for text fields
+		if m.leftPanelItem == 0 {
+			m.editMode = true
+			m.includeInput.Focus()
+			m.activeInput = &m.includeInput
+			return m, textinput.Blink
+		} else if m.leftPanelItem == 1 {
+			m.editMode = true
+			m.excludeInput.Focus()
+			m.activeInput = &m.excludeInput
+			return m, textinput.Blink
+		}
+		return m, nil
+		
+	case " ", "space":
+		// Toggle log levels with space key
+		switch m.leftPanelItem {
+		case 2:
+			m.showError = !m.showError
+			m.applyFilters()
+		case 3:
+			m.showWarn = !m.showWarn
+			m.applyFilters()
+		case 4:
+			m.showInfo = !m.showInfo
+			m.applyFilters()
+		case 5:
+			m.showDebug = !m.showDebug
+			m.applyFilters()
+		}
+		return m, nil
+		
 	case "1", "2", "3", "4":
-		// Toggle log levels
+		// Quick toggle with number keys
 		switch msg.String() {
 		case "1":
 			m.showError = !m.showError
@@ -270,6 +288,7 @@ func (m *Model) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.showDebug = !m.showDebug
 		}
 		m.applyFilters()
+		return m, nil
 	}
 
 	return m, nil
@@ -287,6 +306,26 @@ func (m *Model) updateRightPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedIdx++
 			m.adjustScrollOffset()
 		}
+	case "ctrl+d":
+		// Half page down (vim-like)
+		pageSize := m.getLogViewHeight() / 2
+		if pageSize < 1 {
+			pageSize = 1
+		}
+		for i := 0; i < pageSize && m.selectedIdx < len(m.filteredEntries)-1; i++ {
+			m.selectedIdx++
+		}
+		m.adjustScrollOffset()
+	case "ctrl+u":
+		// Half page up (vim-like)
+		pageSize := m.getLogViewHeight() / 2
+		if pageSize < 1 {
+			pageSize = 1
+		}
+		for i := 0; i < pageSize && m.selectedIdx > 0; i++ {
+			m.selectedIdx--
+		}
+		m.adjustScrollOffset()
 	case "home":
 		m.selectedIdx = 0
 		m.scrollOffset = 0
@@ -592,29 +631,41 @@ func (m *Model) renderFancyLeftPanel(width int) string {
 		Padding(0, 1).
 		Width(width - 8).
 		MaxWidth(width - 8)
+		
 
-	content += labelStyle.Render("Include Pattern:") + "\n"
+	// Show selection indicator
+	includeIndicator := "  "
+	if m.focus == LeftPanel && m.leftPanelItem == 0 && !m.editMode {
+		includeIndicator = "▶ "
+	}
+	
+	content += includeIndicator + labelStyle.Render("Include Pattern:") + "\n"
 	includeValue := m.includeInput.Value()
 	if includeValue == "" {
 		includeValue = "Type to filter..."
 	}
 	if m.activeInput == &m.includeInput {
-		content += m.includeInput.View() + "\n"
+		content += "  " + m.includeInput.View() + "\n"
 	} else {
-		content += inputStyle.Render(includeValue) + "\n"
+		content += "  " + inputStyle.Render(includeValue) + "\n"
 	}
 	content += "\n"
 
 	// Exclude pattern
-	content += labelStyle.Render("Exclude Pattern:") + "\n"
+	excludeIndicator := "  "
+	if m.focus == LeftPanel && m.leftPanelItem == 1 && !m.editMode {
+		excludeIndicator = "▶ "
+	}
+	
+	content += excludeIndicator + labelStyle.Render("Exclude Pattern:") + "\n"
 	excludeValue := m.excludeInput.Value()
 	if excludeValue == "" {
 		excludeValue = "Type to exclude..."
 	}
 	if m.activeInput == &m.excludeInput {
-		content += m.excludeInput.View() + "\n"
+		content += "  " + m.excludeInput.View() + "\n"
 	} else {
-		content += inputStyle.Render(excludeValue) + "\n"
+		content += "  " + inputStyle.Render(excludeValue) + "\n"
 	}
 	content += "\n"
 
@@ -633,12 +684,29 @@ func (m *Model) renderFancyLeftPanel(width int) string {
 		return "[ ]"
 	}
 
-	content += fmt.Sprintf("  %s %s  %s %s\n",
-		checkbox(m.showError), errorStyle.Render("ERROR"),
-		checkbox(m.showWarn), warnStyle.Render("WARN"))
-	content += fmt.Sprintf("  %s %s   %s %s\n",
-		checkbox(m.showInfo), infoStyle.Render("INFO"),
-		checkbox(m.showDebug), debugStyle.Render("DEBUG"))
+	// Show indicators for log level selection
+	errorIndicator := "  "
+	warnIndicator := "  "
+	infoIndicator := "  "
+	debugIndicator := "  "
+	
+	if m.focus == LeftPanel && !m.editMode {
+		switch m.leftPanelItem {
+		case 2:
+			errorIndicator = "▶ "
+		case 3:
+			warnIndicator = "▶ "
+		case 4:
+			infoIndicator = "▶ "
+		case 5:
+			debugIndicator = "▶ "
+		}
+	}
+	
+	content += fmt.Sprintf("%s%s %s\n", errorIndicator, checkbox(m.showError), errorStyle.Render("ERROR"))
+	content += fmt.Sprintf("%s%s %s\n", warnIndicator, checkbox(m.showWarn), warnStyle.Render("WARN"))
+	content += fmt.Sprintf("%s%s %s\n", infoIndicator, checkbox(m.showInfo), infoStyle.Render("INFO"))
+	content += fmt.Sprintf("%s%s %s\n", debugIndicator, checkbox(m.showDebug), debugStyle.Render("DEBUG"))
 	content += "\n"
 
 	// Filter statistics
@@ -728,9 +796,16 @@ func (m *Model) renderFancyRightPanel(width int) string {
 		Foreground(lipgloss.Color("243")).
 		MarginTop(1)
 
-	shortcuts := "j/k=Navigate | Enter=Details | i=Include | e=Exclude | Tab=Switch | q=Quit"
+	shortcuts := "j/k=Navigate | Enter=Details | Ctrl+d/u=Page | Tab=Switch | q=Quit"
 	if m.viewMode == DetailView {
 		shortcuts = "ESC=Back to list | q=Quit"
+	}
+	if m.focus == LeftPanel {
+		if m.editMode {
+			shortcuts = "Type to filter | Enter=Apply | ESC=Cancel"
+		} else {
+			shortcuts = "j/k=Navigate | i=Edit | Space=Toggle | Tab=Switch"
+		}
 	}
 
 	// Pad content to fill height
