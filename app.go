@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,9 +20,10 @@ type Config struct {
 }
 
 type App struct {
-	config *Config
-	model  *Model
-	parser *LogParser
+	config   *Config
+	model    *Model
+	parser   *LogParser
+	program  *tea.Program
 }
 
 type LogLevel int
@@ -124,13 +126,14 @@ func NewApp(config *Config) *App {
 }
 
 func (a *App) Run() error {
-	// Start input processing in background
+	// Create the Bubbletea program
+	a.program = tea.NewProgram(a.model, tea.WithAltScreen())
+	
+	// Start input processing in background after program is created
 	go a.processInput()
 	
-	// Create and run the Bubbletea program
-	p := tea.NewProgram(a.model, tea.WithAltScreen())
-	
-	if _, err := p.Run(); err != nil {
+	// Run the program
+	if _, err := a.program.Run(); err != nil {
 		return fmt.Errorf("failed to run program: %w", err)
 	}
 	
@@ -138,6 +141,9 @@ func (a *App) Run() error {
 }
 
 func (a *App) processInput() {
+	// Small delay to ensure the program is fully initialized
+	time.Sleep(100 * time.Millisecond)
+	
 	// Check if we have piped input
 	stat, err := os.Stdin.Stat()
 	if err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
@@ -162,7 +168,7 @@ func (a *App) readFromStdin() {
 	for scanner.Scan() {
 		line := scanner.Text()
 		entry := a.parseLogLine(line)
-		a.model.AddLogEntry(entry)
+		a.sendLogEntry(entry)
 	}
 }
 
@@ -178,10 +184,17 @@ func (a *App) readFromFile(filename string) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		entry := a.parser.ParseLogLine(line, filename)
-		a.model.AddLogEntry(entry)
+		a.sendLogEntry(entry)
 	}
 }
 
 func (a *App) parseLogLine(line string) LogEntry {
 	return a.parser.ParseLogLine(line, "")
+}
+
+func (a *App) sendLogEntry(entry LogEntry) {
+	if a.program != nil {
+		// Send the log entry as a message to the UI
+		a.program.Send(LogEntryMsg(entry))
+	}
 }
