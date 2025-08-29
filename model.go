@@ -198,6 +198,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "/":
+			// Global shortcut to focus Include field in edit mode
+			m.focus = LeftPanel
+			m.leftPanelItem = 0
+			m.editMode = true
+			m.includeInput.Focus()
+			m.activeInput = &m.includeInput
+			return m, textinput.Blink
+
+		case "\\":
+			// Global shortcut to focus Exclude field in edit mode
+			m.focus = LeftPanel
+			m.leftPanelItem = 1
+			m.editMode = true
+			m.excludeInput.Focus()
+			m.activeInput = &m.excludeInput
+			return m, textinput.Blink
+
 		case "c":
 			m.includeInput.SetValue("")
 			m.excludeInput.SetValue("")
@@ -762,14 +780,35 @@ func (m *Model) renderFancyRightPanel(width int) string {
 		// Detail view
 		content.WriteString(m.renderDetailContent(m.filteredEntries[m.selectedIdx], width-4))
 	} else {
-		// List view
+		// List view with 3-column design
+		
+		// Render column headers
+		headerStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("245")).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderBottom(true).
+			BorderForeground(lipgloss.Color("240"))
+		
+		// Calculate column widths with padding
+		timeWidth := 25  // ISO 8601 timestamps are longer
+		levelWidth := 7   // [ERROR]
+		messageWidth := width - timeWidth - levelWidth - 10 // Account for borders and padding
+		
+		headers := fmt.Sprintf("%-*s  %-*s  %s",
+			timeWidth, "TIME",
+			levelWidth, "LEVEL",
+			"MESSAGE")
+		content.WriteString(headerStyle.Render(headers) + "\n")
+		
+		// Render log entries
 		for i := m.scrollOffset; i < m.scrollOffset+availableHeight && i < len(m.filteredEntries); i++ {
 			if i < 0 || i >= len(m.filteredEntries) {
 				continue
 			}
 
 			entry := m.filteredEntries[i]
-			line := m.formatFancyLogEntry(entry, width-4)
+			line := m.formatColumnLogEntry(entry, timeWidth, levelWidth, messageWidth)
 
 			if i == m.selectedIdx {
 				selectedStyle := lipgloss.NewStyle().
@@ -816,6 +855,43 @@ func (m *Model) renderFancyRightPanel(width int) string {
 	lines = append(lines, footerStyle.Render(shortcuts))
 
 	return panelStyle.Render(strings.Join(lines, "\n"))
+}
+
+func (m *Model) formatColumnLogEntry(entry LogEntry, timeWidth, levelWidth, messageWidth int) string {
+	// Format timestamp (truncate if needed)
+	timestamp := entry.Timestamp
+	if len(timestamp) > timeWidth {
+		timestamp = timestamp[:timeWidth]
+	}
+	
+	// Format level with color
+	levelText := fmt.Sprintf("[%s]", entry.Level.String())
+	levelStyle := lipgloss.NewStyle()
+	switch entry.Level {
+	case ERROR:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("196"))
+	case WARN:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("214"))
+	case INFO:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("117"))
+	case DEBUG:
+		levelStyle = levelStyle.Foreground(lipgloss.Color("243"))
+	}
+	coloredLevel := levelStyle.Render(levelText)
+	
+	// Format message - ensure single line, truncate if needed
+	message := strings.ReplaceAll(entry.Message, "\n", " ")
+	message = strings.ReplaceAll(message, "\r", "")
+	message = strings.TrimSpace(message)
+	if messageWidth > 0 && len(message) > messageWidth {
+		message = message[:messageWidth-3] + "..."
+	}
+	
+	// Format with proper spacing
+	return fmt.Sprintf("%-*s  %s  %s",
+		timeWidth, timestamp,
+		coloredLevel,
+		message)
 }
 
 func (m *Model) formatFancyLogEntry(entry LogEntry, width int) string {

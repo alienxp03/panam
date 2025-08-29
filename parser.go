@@ -65,12 +65,12 @@ func (p *LogParser) tryParseOTLP(line string) (LogEntry, bool) {
 		Metadata: make(map[string]interface{}),
 	}
 	
-	// Convert timestamp
+	// Convert timestamp to ISO 8601
 	if otlpLog.Timestamp > 0 {
 		t := time.Unix(0, otlpLog.Timestamp).In(p.timezone)
-		entry.Timestamp = t.Format("2006-01-02 15:04:05")
+		entry.Timestamp = t.Format(time.RFC3339)
 	} else {
-		entry.Timestamp = time.Now().In(p.timezone).Format("2006-01-02 15:04:05")
+		entry.Timestamp = time.Now().In(p.timezone).Format(time.RFC3339)
 	}
 	
 	// Convert severity
@@ -168,7 +168,7 @@ func (p *LogParser) parsePlainText(line string, source string) LogEntry {
 	cleanLine := ansiRegex.ReplaceAllString(line, "")
 	
 	entry := LogEntry{
-		Timestamp: time.Now().In(p.timezone).Format("2006-01-02 15:04:05"),
+		Timestamp: time.Now().In(p.timezone).Format(time.RFC3339),
 		Level:     INFO,
 		Message:   cleanLine,
 		Raw:       line,
@@ -215,7 +215,7 @@ func (p *LogParser) extractTimestamp(entry *LogEntry, line string) {
 			
 			for _, format := range formats {
 				if t, err := time.Parse(format, matches[1]); err == nil {
-					entry.Timestamp = t.In(p.timezone).Format("2006-01-02 15:04:05")
+					entry.Timestamp = t.In(p.timezone).Format(time.RFC3339)
 					return
 				}
 			}

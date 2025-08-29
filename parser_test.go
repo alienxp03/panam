@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -151,7 +152,7 @@ func TestLogParser_ExtractTimestamp(t *testing.T) {
 			
 			// Parse current time to compare
 			now := time.Now()
-			currentTimeStr := now.Format("2006-01-02 15:04:05")
+			currentTimeStr := now.Format(time.RFC3339)
 			
 			if tc.expectedTimestamp {
 				// Should not be current time (should be extracted from log)
@@ -160,9 +161,10 @@ func TestLogParser_ExtractTimestamp(t *testing.T) {
 				}
 			}
 			// Note: We can't easily test the exact extracted timestamp without
-			// complex parsing, but we can verify the format is correct
-			if len(entry.Timestamp) != len("2006-01-02 15:04:05") {
-				t.Errorf("Expected timestamp format 'YYYY-MM-DD HH:MM:SS', got '%s'", entry.Timestamp)
+			// complex parsing, but we can verify the format is correct (ISO 8601)
+			// ISO 8601 format: 2006-01-02T15:04:05Z07:00
+			if !strings.Contains(entry.Timestamp, "T") {
+				t.Errorf("Expected ISO 8601 timestamp format, got '%s'", entry.Timestamp)
 			}
 		})
 	}
