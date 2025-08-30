@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,6 +31,8 @@ type Model struct {
 	buffer          *CircularBuffer
 	entries         []LogEntry
 	filteredEntries []LogEntry
+	matchedIndices  []int // Indices of entries that match include pattern
+	currentMatchIdx int   // Current position in matchedIndices
 
 	// UI state
 	focus        PanelFocus
@@ -39,14 +43,19 @@ type Model struct {
 	viewMode     ViewMode
 	leftWidth    int // Fixed left panel width
 	rightWidth   int // Fixed right panel width
+	tailing      bool // Auto-scroll to bottom for live tail
+	lastGPress   int64 // For detecting "gg" key combo
+	lastUpdate   time.Time // For rate limiting UI updates
 
 	// Filter inputs
 	includeInput textinput.Model
 	excludeInput textinput.Model
 	activeInput  *textinput.Model
+	useRegex     bool // Use regex for pattern matching
+	caseSensitive bool // Case-sensitive matching
 	
 	// Left panel navigation
-	leftPanelItem int  // 0=include, 1=exclude, 2-5=log levels
+	leftPanelItem int  // 0=include, 1=exclude, 2-3=checkboxes, 4-7=log levels
 	editMode      bool // true when editing text fields
 
 	// Log level filters
@@ -93,6 +102,11 @@ func NewModel(config *Config) *Model {
 		showError:       true,
 		includeInput:    includeInput,
 		excludeInput:    excludeInput,
+		useRegex:        false,
+		caseSensitive:   false,
+		tailing:         false,
+		matchedIndices:  []int{},
+		currentMatchIdx: -1,
 
 		focusedStyle: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -126,7 +140,16 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		textinput.Blink,
 		tea.EnterAltScreen,
+		tickCmd(), // Start the tick for regular UI updates
 	)
+}
+
+type tickMsg time.Time
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Millisecond * 50, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -198,6 +221,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "alt+1":
+			// Switch to left panel
+			m.focus = LeftPanel
+			m.leftPanelItem = 0 // Reset to first item
+			return m, nil
+
+		case "alt+2":
+			// Switch to right panel
+			m.focus = RightPanel
+			return m, nil
+
 		case "/":
 			// Global shortcut to focus Include field in edit mode
 			m.focus = LeftPanel
@@ -239,6 +273,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case LogEntryMsg:
 		m.AddLogEntry(LogEntry(msg))
 		return m, nil
+	
+	case LogBatchMsg:
+		m.AddLogBatch([]LogEntry(msg))
+		// Don't trigger immediate redraw for batch, let tick handle it
+		return m, nil
+	
+	case tickMsg:
+		// Regular UI update tick
+		return m, tickCmd()
 	}
 
 	// Don't update inputs here - it's handled in the edit mode section above
@@ -255,7 +298,7 @@ func (m *Model) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 		
 	case "down", "j":
-		if m.leftPanelItem < 5 { // 0-1 for text fields, 2-5 for log levels
+		if m.leftPanelItem < 7 { // 0-1 for text fields, 2-3 for checkboxes, 4-7 for log levels
 			m.leftPanelItem++
 		}
 		return m, nil
@@ -276,18 +319,24 @@ func (m *Model) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 		
 	case " ", "space":
-		// Toggle log levels with space key
+		// Toggle checkboxes and log levels with space key
 		switch m.leftPanelItem {
 		case 2:
-			m.showError = !m.showError
+			m.useRegex = !m.useRegex
 			m.applyFilters()
 		case 3:
-			m.showWarn = !m.showWarn
+			m.caseSensitive = !m.caseSensitive
 			m.applyFilters()
 		case 4:
-			m.showInfo = !m.showInfo
+			m.showError = !m.showError
 			m.applyFilters()
 		case 5:
+			m.showWarn = !m.showWarn
+			m.applyFilters()
+		case 6:
+			m.showInfo = !m.showInfo
+			m.applyFilters()
+		case 7:
 			m.showDebug = !m.showDebug
 			m.applyFilters()
 		}
@@ -319,6 +368,8 @@ func (m *Model) updateRightPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedIdx--
 			m.adjustScrollOffset()
 		}
+		// Cancel tailing when user navigates up
+		m.tailing = false
 	case "down", "j":
 		if m.selectedIdx < len(m.filteredEntries)-1 {
 			m.selectedIdx++
@@ -347,9 +398,27 @@ func (m *Model) updateRightPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "home":
 		m.selectedIdx = 0
 		m.scrollOffset = 0
+		m.tailing = false
 	case "end":
 		m.selectedIdx = len(m.filteredEntries) - 1
 		m.adjustScrollOffset()
+	case "g":
+		// Check for "gg" combo
+		now := time.Now().UnixMilli()
+		if m.lastGPress > 0 && now-m.lastGPress < 500 {
+			// "gg" detected - go to top
+			m.selectedIdx = 0
+			m.scrollOffset = 0
+			m.tailing = false
+			m.lastGPress = 0
+		} else {
+			m.lastGPress = now
+		}
+	case "G":
+		// Go to bottom and enable tailing
+		m.selectedIdx = len(m.filteredEntries) - 1
+		m.adjustScrollOffset()
+		m.tailing = true
 	}
 
 	return m, nil
@@ -641,6 +710,25 @@ func (m *Model) renderFancyLeftPanel(width int) string {
 
 	content := titleStyle.Render("🔍 SEARCH & FILTERS") + "\n"
 
+	// Show loaded files if any
+	if len(m.config.Files) > 0 {
+		filesStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")).
+			Italic(true)
+		content += filesStyle.Render("📁 Files:") + "\n"
+		for _, file := range m.config.Files {
+			// Extract just the filename from the path
+			fileName := file
+			if strings.Contains(file, "/") {
+				parts := strings.Split(file, "/")
+				fileName = parts[len(parts)-1]
+			}
+			fileStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+			content += "  • " + fileStyle.Render(fileName) + "\n"
+		}
+		content += "\n"
+	}
+
 	// Include pattern
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 	inputStyle := lipgloss.NewStyle().
@@ -687,13 +775,20 @@ func (m *Model) renderFancyLeftPanel(width int) string {
 	}
 	content += "\n"
 
-	// Log levels
-	content += labelStyle.Render("Log Levels:") + "\n"
+	// Pattern matching options
+	content += labelStyle.Render("Options:") + "\n"
 
-	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
-	debugStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	regexIndicator := "  "
+	caseIndicator := "  "
+	
+	if m.focus == LeftPanel && !m.editMode {
+		switch m.leftPanelItem {
+		case 2:
+			regexIndicator = "▶ "
+		case 3:
+			caseIndicator = "▶ "
+		}
+	}
 
 	checkbox := func(checked bool) string {
 		if checked {
@@ -701,6 +796,19 @@ func (m *Model) renderFancyLeftPanel(width int) string {
 		}
 		return "[ ]"
 	}
+
+	optionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	content += fmt.Sprintf("%s%s %s\n", regexIndicator, checkbox(m.useRegex), optionStyle.Render("Use Regex"))
+	content += fmt.Sprintf("%s%s %s\n", caseIndicator, checkbox(m.caseSensitive), optionStyle.Render("Case Sensitive"))
+	content += "\n"
+
+	// Log levels
+	content += labelStyle.Render("Log Levels:") + "\n"
+
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	infoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	debugStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 
 	// Show indicators for log level selection
 	errorIndicator := "  "
@@ -710,13 +818,13 @@ func (m *Model) renderFancyLeftPanel(width int) string {
 	
 	if m.focus == LeftPanel && !m.editMode {
 		switch m.leftPanelItem {
-		case 2:
-			errorIndicator = "▶ "
-		case 3:
-			warnIndicator = "▶ "
 		case 4:
-			infoIndicator = "▶ "
+			errorIndicator = "▶ "
 		case 5:
+			warnIndicator = "▶ "
+		case 6:
+			infoIndicator = "▶ "
+		case 7:
 			debugIndicator = "▶ "
 		}
 	}
@@ -795,11 +903,20 @@ func (m *Model) renderFancyRightPanel(width int) string {
 		levelWidth := 7   // [ERROR]
 		messageWidth := width - timeWidth - levelWidth - 10 // Account for borders and padding
 		
+		// Show match indicator in header if there are matches
+		matchInfo := ""
+		if len(m.matchedIndices) > 0 {
+			matchStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("226")).
+				Bold(true)
+			matchInfo = matchStyle.Render(fmt.Sprintf(" [%d/%d matches]", m.currentMatchIdx+1, len(m.matchedIndices)))
+		}
+		
 		headers := fmt.Sprintf("%-*s  %-*s  %s",
 			timeWidth, "TIME",
 			levelWidth, "LEVEL",
 			"MESSAGE")
-		content.WriteString(headerStyle.Render(headers) + "\n")
+		content.WriteString(headerStyle.Render(headers) + matchInfo + "\n")
 		
 		// Render log entries
 		for i := m.scrollOffset; i < m.scrollOffset+availableHeight && i < len(m.filteredEntries); i++ {
@@ -808,7 +925,9 @@ func (m *Model) renderFancyRightPanel(width int) string {
 			}
 
 			entry := m.filteredEntries[i]
-			line := m.formatColumnLogEntry(entry, timeWidth, levelWidth, messageWidth)
+			// Check if this entry matches the include pattern
+			isMatch := m.isEntryMatch(i)
+			line := m.formatColumnLogEntry(entry, timeWidth, levelWidth, messageWidth, isMatch)
 
 			if i == m.selectedIdx {
 				selectedStyle := lipgloss.NewStyle().
@@ -835,7 +954,14 @@ func (m *Model) renderFancyRightPanel(width int) string {
 		Foreground(lipgloss.Color("243")).
 		MarginTop(1)
 
-	shortcuts := "j/k=Navigate | Enter=Details | Ctrl+d/u=Page | Tab=Switch | q=Quit"
+	shortcuts := "j/k=Nav | n/N=Next/Prev | gg/G=Top/Tail | Alt+1/2=Panel | q=Quit"
+	if m.tailing {
+		shortcuts += " [TAILING]"
+	}
+	if len(m.matchedIndices) > 0 {
+		matchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
+		shortcuts += matchStyle.Render(fmt.Sprintf(" [%d/%d]", m.currentMatchIdx+1, len(m.matchedIndices)))
+	}
 	if m.viewMode == DetailView {
 		shortcuts = "ESC=Back to list | q=Quit"
 	}
@@ -843,7 +969,7 @@ func (m *Model) renderFancyRightPanel(width int) string {
 		if m.editMode {
 			shortcuts = "Type to filter | Enter=Apply | ESC=Cancel"
 		} else {
-			shortcuts = "j/k=Navigate | i=Edit | Space=Toggle | Tab=Switch"
+			shortcuts = "j/k=Navigate | i=Edit | Space=Toggle | Alt+2=Logs"
 		}
 	}
 
@@ -857,7 +983,7 @@ func (m *Model) renderFancyRightPanel(width int) string {
 	return panelStyle.Render(strings.Join(lines, "\n"))
 }
 
-func (m *Model) formatColumnLogEntry(entry LogEntry, timeWidth, levelWidth, messageWidth int) string {
+func (m *Model) formatColumnLogEntry(entry LogEntry, timeWidth, levelWidth, messageWidth int, isMatch bool) string {
 	// Format timestamp (truncate if needed)
 	timestamp := entry.Timestamp
 	if len(timestamp) > timeWidth {
@@ -883,6 +1009,12 @@ func (m *Model) formatColumnLogEntry(entry LogEntry, timeWidth, levelWidth, mess
 	message := strings.ReplaceAll(entry.Message, "\n", " ")
 	message = strings.ReplaceAll(message, "\r", "")
 	message = strings.TrimSpace(message)
+	
+	// Highlight matching text if this entry matches
+	if isMatch && m.includeInput.Value() != "" {
+		message = m.highlightMatches(message)
+	}
+	
 	if messageWidth > 0 && len(message) > messageWidth {
 		message = message[:messageWidth-3] + "..."
 	}
@@ -1334,10 +1466,43 @@ func (m *Model) AddLogEntry(entry LogEntry) {
 	m.buffer.Add(entry)
 	m.entries = m.buffer.GetAll()
 	m.applyFilters()
+
+	// If tailing, auto-scroll to bottom
+	if m.tailing && len(m.filteredEntries) > 0 {
+		m.selectedIdx = len(m.filteredEntries) - 1
+		m.adjustScrollOffset()
+	}
+}
+
+func (m *Model) AddLogBatch(entries []LogEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// Add all entries to buffer
+	for _, entry := range entries {
+		m.buffer.Add(entry)
+	}
+	
+	// Get all entries once after batch add
+	m.entries = m.buffer.GetAll()
+	
+	// Apply filters once for the entire batch
+	m.applyFilters()
+
+	// If tailing, auto-scroll to bottom
+	if m.tailing && len(m.filteredEntries) > 0 {
+		m.selectedIdx = len(m.filteredEntries) - 1
+		m.adjustScrollOffset()
+	}
 }
 
 func (m *Model) applyFilters() {
 	m.filteredEntries = []LogEntry{}
+	m.matchedIndices = []int{}
 
 	includePatterns := strings.Split(m.includeInput.Value(), ",")
 	excludePatterns := strings.Split(m.excludeInput.Value(), ",")
@@ -1350,33 +1515,72 @@ func (m *Model) applyFilters() {
 		excludePatterns[i] = strings.TrimSpace(pattern)
 	}
 
+	// Compile regex patterns if needed
+	var includeRegexes []*regexp.Regexp
+	var excludeRegexes []*regexp.Regexp
+	
+	if m.useRegex {
+		for _, pattern := range includePatterns {
+			if pattern != "" {
+				if m.caseSensitive {
+					if re, err := regexp.Compile(pattern); err == nil {
+						includeRegexes = append(includeRegexes, re)
+					}
+				} else {
+					if re, err := regexp.Compile("(?i)" + pattern); err == nil {
+						includeRegexes = append(includeRegexes, re)
+					}
+				}
+			}
+		}
+		for _, pattern := range excludePatterns {
+			if pattern != "" {
+				if m.caseSensitive {
+					if re, err := regexp.Compile(pattern); err == nil {
+						excludeRegexes = append(excludeRegexes, re)
+					}
+				} else {
+					if re, err := regexp.Compile("(?i)" + pattern); err == nil {
+						excludeRegexes = append(excludeRegexes, re)
+					}
+				}
+			}
+		}
+	}
+
 	for _, entry := range m.entries {
 		// Check log level filter
 		if !m.shouldShowLevel(entry.Level) {
 			continue
 		}
 
-		// Check include patterns
-		if len(includePatterns) > 0 && includePatterns[0] != "" {
-			included := false
-			for _, pattern := range includePatterns {
-				if pattern != "" && strings.Contains(strings.ToLower(entry.Message), strings.ToLower(pattern)) {
-					included = true
-					break
-				}
-			}
-			if !included {
-				continue
-			}
-		}
-
-		// Check exclude patterns
+		// Check exclude patterns first - if excluded, skip this entry
 		if len(excludePatterns) > 0 && excludePatterns[0] != "" {
 			excluded := false
-			for _, pattern := range excludePatterns {
-				if pattern != "" && strings.Contains(strings.ToLower(entry.Message), strings.ToLower(pattern)) {
-					excluded = true
-					break
+			if m.useRegex {
+				// Use regex matching
+				for _, re := range excludeRegexes {
+					if re.MatchString(entry.Message) {
+						excluded = true
+						break
+					}
+				}
+			} else {
+				// Use simple string matching
+				for _, pattern := range excludePatterns {
+					if pattern != "" {
+						if m.caseSensitive {
+							if strings.Contains(entry.Message, pattern) {
+								excluded = true
+								break
+							}
+						} else {
+							if strings.Contains(strings.ToLower(entry.Message), strings.ToLower(pattern)) {
+								excluded = true
+								break
+							}
+						}
+					}
 				}
 			}
 			if excluded {
@@ -1384,7 +1588,43 @@ func (m *Model) applyFilters() {
 			}
 		}
 
+		// Add to filtered entries (all non-excluded entries with matching log level)
 		m.filteredEntries = append(m.filteredEntries, entry)
+		filteredIdx := len(m.filteredEntries) - 1
+
+		// Check include patterns for highlighting/matching
+		if len(includePatterns) > 0 && includePatterns[0] != "" {
+			matched := false
+			if m.useRegex {
+				// Use regex matching
+				for _, re := range includeRegexes {
+					if re.MatchString(entry.Message) {
+						matched = true
+						break
+					}
+				}
+			} else {
+				// Use simple string matching
+				for _, pattern := range includePatterns {
+					if pattern != "" {
+						if m.caseSensitive {
+							if strings.Contains(entry.Message, pattern) {
+								matched = true
+								break
+							}
+						} else {
+							if strings.Contains(strings.ToLower(entry.Message), strings.ToLower(pattern)) {
+								matched = true
+								break
+							}
+						}
+					}
+				}
+			}
+			if matched {
+				m.matchedIndices = append(m.matchedIndices, filteredIdx)
+			}
+		}
 	}
 
 	// Adjust selection if needed
@@ -1393,6 +1633,21 @@ func (m *Model) applyFilters() {
 	}
 	if m.selectedIdx < 0 {
 		m.selectedIdx = 0
+	}
+
+	// Auto-jump to most recent match if there are matches
+	if len(m.matchedIndices) > 0 {
+		m.currentMatchIdx = len(m.matchedIndices) - 1 // Most recent match
+		m.selectedIdx = m.matchedIndices[m.currentMatchIdx]
+		m.adjustScrollOffset()
+	} else {
+		m.currentMatchIdx = -1
+	}
+
+	// If tailing and no matches, scroll to bottom
+	if m.tailing && len(m.filteredEntries) > 0 && len(m.matchedIndices) == 0 {
+		m.selectedIdx = len(m.filteredEntries) - 1
+		m.adjustScrollOffset()
 	}
 }
 
@@ -1412,4 +1667,78 @@ func (m *Model) shouldShowLevel(level LogLevel) bool {
 }
 
 type LogEntryMsg LogEntry
+type LogBatchMsg []LogEntry
+
+// Helper function to check if an entry at given index matches
+func (m *Model) isEntryMatch(idx int) bool {
+	for _, matchIdx := range m.matchedIndices {
+		if matchIdx == idx {
+			return true
+		}
+	}
+	return false
+}
+
+// Helper function to highlight matching text in a message
+func (m *Model) highlightMatches(message string) string {
+	if m.includeInput.Value() == "" {
+		return message
+	}
+
+	highlightStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("226")).
+		Foreground(lipgloss.Color("0")).
+		Bold(true)
+
+	includePatterns := strings.Split(m.includeInput.Value(), ",")
+	for i, pattern := range includePatterns {
+		includePatterns[i] = strings.TrimSpace(pattern)
+	}
+
+	// For simplicity, highlight the first matching pattern found
+	for _, pattern := range includePatterns {
+		if pattern == "" {
+			continue
+		}
+
+		if m.useRegex {
+			var re *regexp.Regexp
+			var err error
+			if m.caseSensitive {
+				re, err = regexp.Compile(pattern)
+			} else {
+				re, err = regexp.Compile("(?i)" + pattern)
+			}
+			if err == nil && re != nil {
+				matches := re.FindAllStringIndex(message, -1)
+				if len(matches) > 0 {
+					// Highlight first match for display
+					start := matches[0][0]
+					end := matches[0][1]
+					if start >= 0 && end <= len(message) {
+						highlighted := message[:start] + highlightStyle.Render(message[start:end]) + message[end:]
+						return highlighted
+					}
+				}
+			}
+		} else {
+			// Simple string matching
+			var idx int
+			if m.caseSensitive {
+				idx = strings.Index(message, pattern)
+			} else {
+				idx = strings.Index(strings.ToLower(message), strings.ToLower(pattern))
+			}
+			if idx >= 0 {
+				end := idx + len(pattern)
+				if end <= len(message) {
+					highlighted := message[:idx] + highlightStyle.Render(message[idx:end]) + message[end:]
+					return highlighted
+				}
+			}
+		}
+	}
+
+	return message
+}
 

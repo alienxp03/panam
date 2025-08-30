@@ -24,6 +24,10 @@ type OTLPLog struct {
 
 type LogParser struct {
 	timezone *time.Location
+	// Pre-compiled regex patterns for performance
+	railsRegex    *regexp.Regexp
+	commonLogRegex *regexp.Regexp
+	timestampRegexes []*regexp.Regexp
 }
 
 func NewLogParser(timezone string) *LogParser {
@@ -32,8 +36,23 @@ func NewLogParser(timezone string) *LogParser {
 		loc = time.UTC
 	}
 	
+	// Pre-compile regex patterns for better performance
+	railsRegex := regexp.MustCompile(`^\s*\(([0-9.]+)ms\)\s+(.+)$`)
+	commonLogRegex := regexp.MustCompile(`^(\S+) - - \[([^\]]+)\] "([^"]*)" (\d+) (\d+)`)
+	
+	// Pre-compile timestamp patterns
+	timestampRegexes := []*regexp.Regexp{
+		regexp.MustCompile(`(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`),                    // 2023-01-01 12:00:00
+		regexp.MustCompile(`(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})`),                   // 01/Jan/2023:12:00:00
+		regexp.MustCompile(`(\w{3} \d{1,2} \d{2}:\d{2}:\d{2})`),                       // Jan 1 12:00:00
+		regexp.MustCompile(`(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))`), // ISO 8601
+	}
+	
 	return &LogParser{
 		timezone: loc,
+		railsRegex: railsRegex,
+		commonLogRegex: commonLogRegex,
+		timestampRegexes: timestampRegexes,
 	}
 }
 
@@ -55,6 +74,11 @@ func (p *LogParser) ParseLogLine(line string, source string) LogEntry {
 }
 
 func (p *LogParser) tryParseOTLP(line string) (LogEntry, bool) {
+	// Quick check for JSON before attempting unmarshal
+	if len(line) == 0 || (line[0] != '{' && line[0] != '[') {
+		return LogEntry{}, false
+	}
+	
 	var otlpLog OTLPLog
 	if err := json.Unmarshal([]byte(line), &otlpLog); err != nil {
 		return LogEntry{}, false
@@ -107,8 +131,7 @@ func (p *LogParser) tryParseStructured(line string) (LogEntry, bool) {
 	cleanLine := ansiRegex.ReplaceAllString(line, "")
 	
 	// Try Rails log format: "  (0.3ms)  SQL query" (after ANSI stripping)
-	railsRegex := regexp.MustCompile(`^\s*\(([0-9.]+)ms\)\s+(.+)$`)
-	if matches := railsRegex.FindStringSubmatch(cleanLine); len(matches) == 3 {
+	if matches := p.railsRegex.FindStringSubmatch(cleanLine); len(matches) == 3 {
 		entry := LogEntry{
 			Timestamp: time.Now().In(p.timezone).Format("2006-01-02 15:04:05"),
 			Level:     INFO,
@@ -133,8 +156,7 @@ func (p *LogParser) tryParseStructured(line string) (LogEntry, bool) {
 	}
 	
 	// Try common log formats like Apache/Nginx
-	commonLogRegex := regexp.MustCompile(`^(\S+) - - \[([^\]]+)\] "([^"]*)" (\d+) (\d+)`)
-	if matches := commonLogRegex.FindStringSubmatch(cleanLine); len(matches) == 6 {
+	if matches := p.commonLogRegex.FindStringSubmatch(cleanLine); len(matches) == 6 {
 		entry := LogEntry{
 			Timestamp: matches[2], // TODO: parse this properly
 			Level:     INFO,
@@ -193,16 +215,7 @@ func (p *LogParser) parsePlainText(line string, source string) LogEntry {
 }
 
 func (p *LogParser) extractTimestamp(entry *LogEntry, line string) {
-	// Common timestamp patterns
-	patterns := []string{
-		`(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`,                    // 2023-01-01 12:00:00
-		`(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})`,                   // 01/Jan/2023:12:00:00
-		`(\w{3} \d{1,2} \d{2}:\d{2}:\d{2})`,                       // Jan 1 12:00:00
-		`(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))`, // ISO 8601
-	}
-	
-	for _, pattern := range patterns {
-		regex := regexp.MustCompile(pattern)
+	for _, regex := range p.timestampRegexes {
 		if matches := regex.FindStringSubmatch(line); len(matches) > 1 {
 			// Try to parse the timestamp
 			formats := []string{

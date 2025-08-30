@@ -141,9 +141,6 @@ func (a *App) Run() error {
 }
 
 func (a *App) processInput() {
-	// Small delay to ensure the program is fully initialized
-	time.Sleep(100 * time.Millisecond)
-	
 	// Check if we have piped input
 	stat, err := os.Stdin.Stat()
 	if err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
@@ -165,10 +162,26 @@ func (a *App) processInput() {
 
 func (a *App) readFromStdin() {
 	scanner := bufio.NewScanner(os.Stdin)
+	// Buffer for batching entries
+	batch := make([]LogEntry, 0, 100)
+	lastSend := time.Now()
+	
 	for scanner.Scan() {
 		line := scanner.Text()
 		entry := a.parseLogLine(line)
-		a.sendLogEntry(entry)
+		batch = append(batch, entry)
+		
+		// Send batch if we have 100 entries or 20ms has passed
+		if len(batch) >= 100 || time.Since(lastSend) > 20*time.Millisecond {
+			a.sendBatch(batch)
+			batch = batch[:0] // Reset batch
+			lastSend = time.Now()
+		}
+	}
+	
+	// Send any remaining entries
+	if len(batch) > 0 {
+		a.sendBatch(batch)
 	}
 }
 
@@ -179,12 +192,31 @@ func (a *App) readFromFile(filename string) {
 	}
 	defer file.Close()
 	
-	// For now, read the entire file. Later we can implement tail-like functionality
+	// Buffer for batching entries
+	batch := make([]LogEntry, 0, 100)
+	lastSend := time.Now()
+	
 	scanner := bufio.NewScanner(file)
+	// Increase scanner buffer for large lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	
 	for scanner.Scan() {
 		line := scanner.Text()
 		entry := a.parser.ParseLogLine(line, filename)
-		a.sendLogEntry(entry)
+		batch = append(batch, entry)
+		
+		// Send batch if we have 200 entries or 20ms has passed  
+		if len(batch) >= 200 || time.Since(lastSend) > 20*time.Millisecond {
+			a.sendBatch(batch)
+			batch = batch[:0] // Reset batch
+			lastSend = time.Now()
+		}
+	}
+	
+	// Send any remaining entries
+	if len(batch) > 0 {
+		a.sendBatch(batch)
 	}
 }
 
@@ -196,5 +228,12 @@ func (a *App) sendLogEntry(entry LogEntry) {
 	if a.program != nil {
 		// Send the log entry as a message to the UI
 		a.program.Send(LogEntryMsg(entry))
+	}
+}
+
+func (a *App) sendBatch(entries []LogEntry) {
+	if a.program != nil && len(entries) > 0 {
+		// Send the batch as a message to the UI
+		a.program.Send(LogBatchMsg(entries))
 	}
 }
