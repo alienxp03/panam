@@ -57,10 +57,25 @@ Usage:
 			Timezone:    timezone,
 		}
 
-		app := NewApp(config)
-		if err := app.Run(); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+		// Use ultra-fast version by default
+		if os.Getenv("PANAM_FAST") != "false" {
+			if err := RunFastApp(config); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+		} else if os.Getenv("PANAM_LEGACY") == "true" {
+			app := NewApp(config)
+			if err := app.Run(); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			// Use optimized version with virtual scrolling
+			app := NewAppV2(config)
+			if err := app.Run(); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	},
 }
