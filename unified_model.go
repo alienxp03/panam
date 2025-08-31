@@ -975,4 +975,24 @@ func (m *UnifiedModel) SetIndexer(indexer *FastIndexer, filename string) {
 	m.applyFilters()
 }
 
-// Helper functions are defined in other files
+// Helper functions
+func checkbox(checked bool) string {
+	if checked {
+		return "✓"
+	}
+	return " "
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

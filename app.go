@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -20,10 +20,10 @@ type Config struct {
 }
 
 type App struct {
-	config   *Config
-	model    *Model
-	parser   *LogParser
-	program  *tea.Program
+	config  *Config
+	model   *Model
+	parser  *LogParser
+	program *tea.Program
 }
 
 type LogLevel int
@@ -53,15 +53,15 @@ func (l LogLevel) String() string {
 func (l LogLevel) Color() lipgloss.Color {
 	switch l {
 	case DEBUG:
-		return lipgloss.Color("8")   // Gray
+		return lipgloss.Color("8") // Gray
 	case INFO:
-		return lipgloss.Color("12")  // Light Blue
+		return lipgloss.Color("12") // Light Blue
 	case WARN:
-		return lipgloss.Color("11")  // Yellow
+		return lipgloss.Color("11") // Yellow
 	case ERROR:
-		return lipgloss.Color("9")   // Red
+		return lipgloss.Color("9") // Red
 	default:
-		return lipgloss.Color("15")  // White
+		return lipgloss.Color("15") // White
 	}
 }
 
@@ -92,7 +92,7 @@ func NewCircularBuffer(maxSize int) *CircularBuffer {
 func (cb *CircularBuffer) Add(entry LogEntry) {
 	cb.entries[cb.head] = entry
 	cb.head = (cb.head + 1) % cb.maxSize
-	
+
 	if cb.size < cb.maxSize {
 		cb.size++
 	} else {
@@ -104,7 +104,7 @@ func (cb *CircularBuffer) GetAll() []LogEntry {
 	if cb.size == 0 {
 		return []LogEntry{}
 	}
-	
+
 	result := make([]LogEntry, cb.size)
 	for i := 0; i < cb.size; i++ {
 		idx := (cb.tail + i) % cb.maxSize
@@ -118,25 +118,25 @@ func NewApp(config *Config) *App {
 		config: config,
 		parser: NewLogParser(config.Timezone),
 	}
-	
+
 	model := NewModel(config)
 	app.model = model
-	
+
 	return app
 }
 
 func (a *App) Run() error {
 	// Create the Bubbletea program
 	a.program = tea.NewProgram(a.model, tea.WithAltScreen())
-	
+
 	// Start input processing in background after program is created
 	go a.processInput()
-	
+
 	// Run the program
 	if _, err := a.program.Run(); err != nil {
 		return fmt.Errorf("failed to run program: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -148,7 +148,7 @@ func (a *App) processInput() {
 		a.readFromStdin()
 		return
 	}
-	
+
 	// Process files if specified
 	if len(a.config.Files) > 0 {
 		for _, file := range a.config.Files {
@@ -156,7 +156,7 @@ func (a *App) processInput() {
 		}
 		return
 	}
-	
+
 	// No input specified, wait for user interaction
 }
 
@@ -165,12 +165,12 @@ func (a *App) readFromStdin() {
 	// Buffer for batching entries
 	batch := make([]LogEntry, 0, 100)
 	lastSend := time.Now()
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		entry := a.parseLogLine(line)
 		batch = append(batch, entry)
-		
+
 		// Send batch if we have 100 entries or 20ms has passed
 		if len(batch) >= 100 || time.Since(lastSend) > 20*time.Millisecond {
 			a.sendBatch(batch)
@@ -178,7 +178,7 @@ func (a *App) readFromStdin() {
 			lastSend = time.Now()
 		}
 	}
-	
+
 	// Send any remaining entries
 	if len(batch) > 0 {
 		a.sendBatch(batch)
@@ -191,29 +191,29 @@ func (a *App) readFromFile(filename string) {
 		return
 	}
 	defer file.Close()
-	
+
 	// Buffer for batching entries
 	batch := make([]LogEntry, 0, 100)
 	lastSend := time.Now()
-	
+
 	scanner := bufio.NewScanner(file)
 	// Increase scanner buffer for large lines
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		entry := a.parser.ParseLogLine(line, filename)
 		batch = append(batch, entry)
-		
-		// Send batch if we have 200 entries or 20ms has passed  
+
+		// Send batch if we have 200 entries or 20ms has passed
 		if len(batch) >= 200 || time.Since(lastSend) > 20*time.Millisecond {
 			a.sendBatch(batch)
 			batch = batch[:0] // Reset batch
 			lastSend = time.Now()
 		}
 	}
-	
+
 	// Send any remaining entries
 	if len(batch) > 0 {
 		a.sendBatch(batch)
@@ -237,3 +237,4 @@ func (a *App) sendBatch(entries []LogEntry) {
 		a.program.Send(LogBatchMsg(entries))
 	}
 }
+
