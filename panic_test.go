@@ -32,7 +32,7 @@ func TestPanic_SmallTerminalDimensions(t *testing.T) {
 				Timezone:    "UTC",
 			}
 			
-			model := NewModel(config)
+			model := NewUnifiedModel(config)
 			
 			// Add some test entries
 			entries := []LogEntry{
@@ -68,7 +68,15 @@ func TestPanic_SmallTerminalDimensions(t *testing.T) {
 }
 
 func TestPanic_NegativeWidthCalculations(t *testing.T) {
-	model := &Model{}
+	config := &Config{
+		MaxLines:    100,
+		Files:       []string{},
+		RefreshRate: 1,
+		Include:     "",
+		Exclude:     "",
+		Timezone:    "UTC",
+	}
+	model := NewUnifiedModel(config)
 	
 	// Test direct method calls with problematic widths
 	defer func() {
@@ -123,7 +131,7 @@ func TestPanic_RenderWithNoEntries(t *testing.T) {
 		Timezone:    "UTC",
 	}
 	
-	model := NewModel(config)
+	model := NewUnifiedModel(config)
 	
 	defer func() {
 		if r := recover(); r != nil {

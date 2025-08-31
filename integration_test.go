@@ -36,11 +36,21 @@ func TestIntegration_FileInput(t *testing.T) {
 	}
 	
 	// Create app and process the file
-	app := NewApp(config)
-	app.readFromFile(testFile)
+	app := NewUnifiedApp(config)
+	app.indexFile(testFile)
 	
 	// Check that entries were parsed
-	entries := app.model.buffer.GetAll()
+	entries := []LogEntry{}
+	if app.model.indexer != nil {
+		count := app.model.indexer.LineCount()
+		if count > 0 {
+			lines := app.model.indexer.GetLines(0, count)
+			for _, line := range lines {
+				entry := app.model.parser.ParseLogLine(line, testFile)
+				entries = append(entries, entry)
+			}
+		}
+	}
 	if len(entries) == 0 {
 		t.Fatal("No entries were parsed from the test file")
 	}
@@ -90,7 +100,7 @@ func TestIntegration_Filtering(t *testing.T) {
 		Timezone:    "UTC",
 	}
 	
-	model := NewModel(config)
+	model := NewUnifiedModel(config)
 	
 	// Add test entries
 	entries := []LogEntry{
@@ -103,6 +113,12 @@ func TestIntegration_Filtering(t *testing.T) {
 	for _, entry := range entries {
 		model.AddLogEntry(entry)
 	}
+	
+	// Apply filters
+	model.applyFilters()
+	
+	// Apply filters to check results
+	model.applyFilters()
 	
 	// Check filtered results
 	if len(model.filteredEntries) != 2 {
@@ -127,7 +143,7 @@ func TestIntegration_LogLevelFiltering(t *testing.T) {
 		Timezone:    "UTC",
 	}
 	
-	model := NewModel(config)
+	model := NewUnifiedModel(config)
 	
 	// Disable INFO level
 	model.showInfo = false
@@ -143,6 +159,9 @@ func TestIntegration_LogLevelFiltering(t *testing.T) {
 	for _, entry := range entries {
 		model.AddLogEntry(entry)
 	}
+	
+	// Apply filters
+	model.applyFilters()
 	
 	// Check that INFO is filtered out
 	infoCount := 0
@@ -180,10 +199,21 @@ func TestIntegration_RealLogFile(t *testing.T) {
 		Timezone:    "UTC",
 	}
 	
-	app := NewApp(config)
-	app.readFromFile(devLogPath)
+	app := NewUnifiedApp(config)
+	app.indexFile(devLogPath)
 	
-	entries := app.model.buffer.GetAll()
+	// Get entries through the model
+	entries := []LogEntry{}
+	if app.model.indexer != nil {
+		count := app.model.indexer.LineCount()
+		if count > 0 {
+			lines := app.model.indexer.GetLines(0, count)
+			for _, line := range lines {
+				entry := app.model.parser.ParseLogLine(line, devLogPath)
+				entries = append(entries, entry)
+			}
+		}
+	}
 	
 	if len(entries) == 0 {
 		t.Error("No entries were parsed from the real log file")

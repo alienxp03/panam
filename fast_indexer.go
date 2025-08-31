@@ -247,6 +247,36 @@ func (fi *FastIndexer) GetLineCount() int {
 	return int(atomic.LoadInt32(&fi.totalLines))
 }
 
+// LineCount returns total indexed lines (alias for GetLineCount)
+func (fi *FastIndexer) LineCount() int {
+	return fi.GetLineCount()
+}
+
+// GetLines returns raw lines for the given range
+func (fi *FastIndexer) GetLines(start, count int) []string {
+	fi.indexMutex.RLock()
+	defer fi.indexMutex.RUnlock()
+	
+	lines := make([]string, 0, count)
+	end := start + count
+	if end > len(fi.indices) {
+		end = len(fi.indices)
+	}
+	
+	for i := start; i < end; i++ {
+		if i < len(fi.indices) {
+			idx := fi.indices[i]
+			buffer := make([]byte, idx.Length)
+			_, err := fi.file.ReadAt(buffer, idx.Offset)
+			if err == nil {
+				lines = append(lines, string(buffer))
+			}
+		}
+	}
+	
+	return lines
+}
+
 // Close releases resources
 func (fi *FastIndexer) Close() error {
 	return fi.file.Close()

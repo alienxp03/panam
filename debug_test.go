@@ -16,7 +16,7 @@ func TestDebug_ProcessLogFile(t *testing.T) {
 		Timezone:    "UTC",
 	}
 
-	app := NewApp(config)
+	app := NewUnifiedApp(config)
 
 	// Try to process the file without starting the TUI
 	defer func() {
@@ -26,9 +26,20 @@ func TestDebug_ProcessLogFile(t *testing.T) {
 	}()
 
 	// This should not panic
-	app.readFromFile("tmp/small_test.log")
+	app.indexFile("tmp/small_test.log")
 
-	entries := app.model.buffer.GetAll()
+	// Get entries through the model
+	entries := []LogEntry{}
+	if app.model.indexer != nil {
+		count := app.model.indexer.LineCount()
+		if count > 0 {
+			lines := app.model.indexer.GetLines(0, min(100, count))
+			for _, line := range lines {
+				entry := app.model.parser.ParseLogLine(line, "tmp/small_test.log")
+				entries = append(entries, entry)
+			}
+		}
+	}
 	if len(entries) == 0 {
 		t.Error("No entries were processed from the log file")
 	}
@@ -53,7 +64,7 @@ func TestDebug_LargeLogFile(t *testing.T) {
 		Timezone:    "UTC",
 	}
 
-	app := NewApp(config)
+	app := NewUnifiedApp(config)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -90,7 +101,7 @@ func TestDebug_ModelInitialization(t *testing.T) {
 		}
 	}()
 
-	model := NewModel(config)
+	model := NewUnifiedModel(config)
 
 	if model == nil {
 		t.Fatal("Model initialization returned nil")

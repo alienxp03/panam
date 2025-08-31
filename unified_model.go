@@ -24,6 +24,10 @@ type UnifiedModel struct {
 	viewportStart   int
 	viewportHeight  int
 	
+	// Testing support
+	entries         []LogEntry     // All entries (for testing)
+	filteredEntries []LogEntry     // Filtered entries (for testing)
+	
 	// UI state
 	focus           PanelFocus
 	width           int
@@ -93,7 +97,7 @@ func NewUnifiedModel(config *Config) *UnifiedModel {
 		parser:         NewLogParser(config.Timezone),
 		visibleEntries: make([]LogEntry, 0),
 		focus:          RightPanel,
-		viewMode:       NormalView,
+		viewMode:       LogStreamView,
 		showDebug:      true,
 		showInfo:       true,
 		showWarn:       true,
@@ -184,7 +188,7 @@ func (m *UnifiedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.viewMode == DetailView {
 			switch msg.String() {
 			case "esc", "q":
-				m.viewMode = NormalView
+				m.viewMode = LogStreamView
 				return m, nil
 			case "j", "down":
 				m.scrollOffset++
@@ -994,6 +998,59 @@ func (m *UnifiedModel) SetIndexer(indexer *FastIndexer, filename string) {
 	
 	// Initial filter apply
 	m.applyFilters()
+}
+
+// AddLogEntry adds a log entry to the model (for testing)
+func (m *UnifiedModel) AddLogEntry(entry LogEntry) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	
+	// If streaming mode, add to entries
+	if m.entries == nil {
+		m.entries = []LogEntry{}
+	}
+	m.entries = append(m.entries, entry)
+	
+	// Add to filtered entries if it passes filters
+	includePatterns := strings.Split(m.includeInput.Value(), ",")
+	excludePatterns := strings.Split(m.excludeInput.Value(), ",")
+	
+	// Clean patterns
+	for i := range includePatterns {
+		includePatterns[i] = strings.TrimSpace(includePatterns[i])
+	}
+	for i := range excludePatterns {
+		excludePatterns[i] = strings.TrimSpace(excludePatterns[i])
+	}
+	
+	// Check log level
+	if !m.shouldShowLevel(entry.Level) {
+		return
+	}
+	
+	// Check exclude patterns
+	for _, pattern := range excludePatterns {
+		if pattern != "" && m.matchesPattern(entry.Message, pattern) {
+			return
+		}
+	}
+	
+	// Check include patterns
+	if m.includeInput.Value() != "" {
+		matched := false
+		for _, pattern := range includePatterns {
+			if pattern != "" && m.matchesPattern(entry.Message, pattern) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return
+		}
+	}
+	
+	// Add to filtered entries
+	m.filteredEntries = append(m.filteredEntries, entry)
 }
 
 // Helper functions
