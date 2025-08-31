@@ -252,6 +252,13 @@ func (m *UnifiedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *UnifiedModel) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "q", "ctrl+c":
+		// Global quit - works from any panel
+		if m.indexer != nil {
+			m.indexer.Close()
+		}
+		return m, tea.Quit
+		
 	case "tab":
 		m.focus = RightPanel
 		return m, nil
@@ -386,17 +393,19 @@ func (m *UnifiedModel) View() string {
 		return "Initializing..."
 	}
 
-	// Detail view
-	if m.viewMode == DetailView {
-		return m.renderDetailView()
-	}
-
 	// Build header
 	header := m.renderHeader()
 	
 	// Build panels
 	leftPanel := m.renderLeftPanel()
-	rightPanel := m.renderRightPanel()
+	
+	// Right panel changes based on view mode
+	var rightPanel string
+	if m.viewMode == DetailView {
+		rightPanel = m.renderDetailPanel()
+	} else {
+		rightPanel = m.renderRightPanel()
+	}
 	
 	// Join panels
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
@@ -436,11 +445,6 @@ func (m *UnifiedModel) renderLeftPanel() string {
 	var content strings.Builder
 	
 	content.WriteString("🔍 SEARCH & FILTERS\n\n")
-	
-	if m.loadingFile != "" {
-		content.WriteString("📁 Files:\n")
-		content.WriteString(fmt.Sprintf("  • %s\n\n", m.loadingFile))
-	}
 	
 	// Include filter
 	if m.leftPanelItem == 0 && m.focus == LeftPanel && !m.editMode {
@@ -516,6 +520,12 @@ func (m *UnifiedModel) renderLeftPanel() string {
 		content.WriteString(fmt.Sprintf("[%s] %s\n", checkbox(level.enabled), level.name))
 	}
 	
+	// Files section at the bottom
+	if m.loadingFile != "" {
+		content.WriteString("\n📁 Files:\n")
+		content.WriteString(fmt.Sprintf("  • %s\n", m.loadingFile))
+	}
+	
 	style := m.blurredStyle
 	if m.focus == LeftPanel {
 		style = m.focusedStyle
@@ -569,47 +579,60 @@ func (m *UnifiedModel) renderRightPanel() string {
 	return style.Width(m.rightWidth).Height(m.height-2).Render(content.String())
 }
 
-func (m *UnifiedModel) renderDetailView() string {
-	if m.selectedIdx < 0 || m.selectedIdx >= len(m.visibleEntries) {
-		return "No entry selected"
-	}
-	
-	entry := m.visibleEntries[m.selectedIdx]
-	
+func (m *UnifiedModel) renderDetailPanel() string {
 	var content strings.Builder
-	content.WriteString(m.headerStyle.Width(m.width).Render(" DETAIL VIEW - Press ESC to return "))
-	content.WriteString("\n\n")
 	
-	// Entry details
-	content.WriteString(fmt.Sprintf("Timestamp: %s\n", entry.Timestamp))
-	content.WriteString(fmt.Sprintf("Level:     %s\n", entry.Level))
-	if entry.Source != "" {
-		content.WriteString(fmt.Sprintf("Source:    %s\n", entry.Source))
-	}
-	content.WriteString("\nMessage:\n")
-	content.WriteString("────────\n")
+	content.WriteString("📄 DETAIL VIEW\n")
+	content.WriteString("              (Press ESC to return)\n")
+	content.WriteString("───────────────────────────────────────────\n")
 	
-	// Wrap message
-	lines := strings.Split(entry.Message, "\n")
-	visibleLines := len(lines) - m.scrollOffset
-	if visibleLines > m.height-10 {
-		visibleLines = m.height - 10
-	}
-	
-	for i := m.scrollOffset; i < m.scrollOffset+visibleLines && i < len(lines); i++ {
-		content.WriteString(lines[i] + "\n")
-	}
-	
-	// Metadata if present
-	if len(entry.Metadata) > 0 {
-		content.WriteString("\nMetadata:\n")
-		content.WriteString("─────────\n")
-		for k, v := range entry.Metadata {
-			content.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+	if m.selectedIdx < 0 || m.selectedIdx >= len(m.visibleEntries) {
+		content.WriteString("\nNo entry selected\n")
+	} else {
+		entry := m.visibleEntries[m.selectedIdx]
+		
+		// Entry details
+		content.WriteString(fmt.Sprintf("\nTimestamp: %s\n", entry.Timestamp))
+		content.WriteString(fmt.Sprintf("Level:     %s\n", entry.Level))
+		if entry.Source != "" {
+			content.WriteString(fmt.Sprintf("Source:    %s\n", entry.Source))
+		}
+		content.WriteString("\nMessage:\n")
+		content.WriteString("────────\n")
+		
+		// Wrap message
+		lines := strings.Split(entry.Message, "\n")
+		visibleLines := len(lines) - m.scrollOffset
+		maxLines := m.height - 15
+		if visibleLines > maxLines {
+			visibleLines = maxLines
+		}
+		
+		for i := m.scrollOffset; i < m.scrollOffset+visibleLines && i < len(lines); i++ {
+			content.WriteString(lines[i] + "\n")
+		}
+		
+		// Metadata if present
+		if len(entry.Metadata) > 0 {
+			content.WriteString("\nMetadata:\n")
+			content.WriteString("─────────\n")
+			for k, v := range entry.Metadata {
+				content.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+			}
 		}
 	}
 	
-	return content.String()
+	style := m.blurredStyle
+	if m.focus == RightPanel {
+		style = m.focusedStyle
+	}
+	
+	return style.Width(m.rightWidth).Height(m.height-2).Render(content.String())
+}
+
+// Keep old function for compatibility but unused
+func (m *UnifiedModel) renderDetailView() string {
+	return ""
 }
 
 func (m *UnifiedModel) formatColumnLogEntry(entry LogEntry, selected, isMatch bool) string {
@@ -715,46 +738,44 @@ func (m *UnifiedModel) applyFilters() {
 	
 	// Filter through all lines (this is still fast with indexing)
 	for i := 0; i < m.totalLines; i++ {
-		// Quick level check without loading the entry
-		if !m.shouldShowIndex(i) {
-			continue
-		}
-		
-		// For pattern matching, we need to load the entry
-		if m.includeInput.Value() != "" || m.excludeInput.Value() != "" {
-			if entries, err := m.indexer.GetLineRange(i, i+1); err == nil && len(entries) > 0 {
-				entry := entries[0]
-				
-				// Check exclude patterns
-				excluded := false
-				for _, pattern := range excludePatterns {
+		// Load entry to check level and patterns
+		if entries, err := m.indexer.GetLineRange(i, i+1); err == nil && len(entries) > 0 {
+			entry := entries[0]
+			
+			// Check log level filter
+			if !m.shouldShowLevel(entry.Level) {
+				continue
+			}
+			
+			// Check exclude patterns
+			excluded := false
+			for _, pattern := range excludePatterns {
+				if pattern != "" && m.matchesPattern(entry.Message, pattern) {
+					excluded = true
+					break
+				}
+			}
+			if excluded {
+				continue
+			}
+			
+			// Check include patterns
+			if m.includeInput.Value() != "" {
+				matched := false
+				for _, pattern := range includePatterns {
 					if pattern != "" && m.matchesPattern(entry.Message, pattern) {
-						excluded = true
+						matched = true
+						m.matchedIndices = append(m.matchedIndices, len(m.filteredIndices))
 						break
 					}
 				}
-				if excluded {
+				if !matched {
 					continue
 				}
-				
-				// Check include patterns
-				if m.includeInput.Value() != "" {
-					matched := false
-					for _, pattern := range includePatterns {
-						if pattern != "" && m.matchesPattern(entry.Message, pattern) {
-							matched = true
-							m.matchedIndices = append(m.matchedIndices, len(m.filteredIndices))
-							break
-						}
-					}
-					if !matched {
-						continue
-					}
-				}
 			}
+			
+			m.filteredIndices = append(m.filteredIndices, i)
 		}
-		
-		m.filteredIndices = append(m.filteredIndices, i)
 	}
 	
 	// Reset viewport if needed
