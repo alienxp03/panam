@@ -127,4 +127,3 @@ const (
 // Messages for TUI
 type LogEntryMsg LogEntry
 type LogBatchMsg []LogEntry
-
