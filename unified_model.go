@@ -924,21 +924,77 @@ func (m *UnifiedModel) scrollUp() {
 }
 
 func (m *UnifiedModel) scrollHalfPageDown() {
-	jump := m.viewportHeight / 2
-	m.viewportStart += jump
-	if m.viewportStart+m.viewportHeight > len(m.filteredIndices) {
-		m.viewportStart = max(0, len(m.filteredIndices)-m.viewportHeight)
+	if len(m.filteredIndices) == 0 {
+		return
 	}
-	m.loadVisibleLines()
+	
+	jump := max(1, m.viewportHeight / 2)
+	oldStart := m.viewportStart
+	maxStart := max(0, len(m.filteredIndices)-m.viewportHeight)
+	
+	// Calculate new position
+	newStart := m.viewportStart + jump
+	
+	// If we would go past the end, go to the absolute bottom
+	if newStart > maxStart {
+		newStart = maxStart
+	}
+	
+	// If we're at the bottom and trying to scroll further, try to show last entry
+	if m.viewportStart == maxStart && len(m.filteredIndices) > m.viewportHeight {
+		// Move selection to the last visible entry
+		m.selectedIdx = min(m.viewportHeight-1, len(m.filteredIndices)-m.viewportStart-1)
+		return
+	}
+	
+	m.viewportStart = newStart
+	
+	// Adjust selection to stay reasonable
+	maxVisibleIdx := min(m.viewportHeight-1, len(m.filteredIndices)-m.viewportStart-1)
+	if m.selectedIdx > maxVisibleIdx {
+		m.selectedIdx = max(0, maxVisibleIdx)
+	}
+	
+	// Only reload if position actually changed
+	if m.viewportStart != oldStart {
+		m.loadVisibleLines()
+	}
 }
 
 func (m *UnifiedModel) scrollHalfPageUp() {
-	jump := m.viewportHeight / 2
-	m.viewportStart -= jump
-	if m.viewportStart < 0 {
-		m.viewportStart = 0
+	if len(m.filteredIndices) == 0 {
+		return
 	}
-	m.loadVisibleLines()
+	
+	jump := max(1, m.viewportHeight / 2)
+	oldStart := m.viewportStart
+	
+	// Calculate new position
+	newStart := m.viewportStart - jump
+	
+	// If we would go before the start, go to absolute top
+	if newStart < 0 {
+		newStart = 0
+	}
+	
+	// If we're at the top and trying to scroll further, move selection to first entry
+	if m.viewportStart == 0 {
+		m.selectedIdx = 0
+		return
+	}
+	
+	m.viewportStart = newStart
+	
+	// Adjust selection to stay reasonable
+	maxVisibleIdx := min(m.viewportHeight-1, len(m.filteredIndices)-m.viewportStart-1)
+	if m.selectedIdx > maxVisibleIdx {
+		m.selectedIdx = max(0, maxVisibleIdx)
+	}
+	
+	// Only reload if position actually changed
+	if m.viewportStart != oldStart {
+		m.loadVisibleLines()
+	}
 }
 
 func (m *UnifiedModel) scrollToTop() {

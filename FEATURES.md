@@ -48,7 +48,7 @@
 
 ### Vim-Style Navigation
 - `j`/`k`: Move up/down
-- `Ctrl+d`/`Ctrl+u`: Half-page scroll
+- `Ctrl+d`/`Ctrl+u`: Half-page scroll (continues until reaching absolute top/bottom)
 - `gg`: Jump to first entry (press 'g' twice)
 - `G`: Jump to last entry and enable tailing
 - `n`: Navigate to next match
