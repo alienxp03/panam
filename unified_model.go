@@ -1074,3 +1074,55 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// renderLogHeader renders the column headers for log display
+func (m *UnifiedModel) renderLogHeader(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	
+	// Calculate column widths
+	timeWidth := 19  // "2023-12-23 15:30:45"
+	levelWidth := 5  // "ERROR"
+	messageWidth := width - timeWidth - levelWidth - 4 // borders
+	
+	if messageWidth <= 0 {
+		return ""
+	}
+	
+	header := fmt.Sprintf("%-*s | %-*s | %s", 
+		timeWidth, "TIME", 
+		levelWidth, "LEVEL", 
+		"MESSAGE")
+	
+	return header
+}
+
+// formatLogEntryColumns formats a log entry into columns
+func (m *UnifiedModel) formatLogEntryColumns(entry LogEntry, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	
+	// Calculate column widths
+	timeWidth := 19  // "2023-12-23 15:30:45"
+	levelWidth := 5  // "ERROR"
+	messageWidth := width - timeWidth - levelWidth - 4 // borders
+	
+	if messageWidth <= 0 {
+		return entry.Message[:min(len(entry.Message), width)]
+	}
+	
+	// Truncate message if too long
+	message := entry.Message
+	if len(message) > messageWidth {
+		message = message[:messageWidth-3] + "..."
+	}
+	
+	formatted := fmt.Sprintf("%-*s | %-*s | %s",
+		timeWidth, entry.Timestamp,
+		levelWidth, entry.Level.String(),
+		message)
+	
+	return formatted
+}

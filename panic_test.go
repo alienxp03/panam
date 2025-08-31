@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 func TestPanic_SmallTerminalDimensions(t *testing.T) {
@@ -85,13 +84,7 @@ func TestPanic_NegativeWidthCalculations(t *testing.T) {
 		}
 	}()
 	
-	// Initialize required fields
-	model.levelStyles = map[LogLevel]lipgloss.Style{
-		ERROR: lipgloss.NewStyle().Foreground(lipgloss.Color("9")),
-		WARN:  lipgloss.NewStyle().Foreground(lipgloss.Color("11")),
-		INFO:  lipgloss.NewStyle().Foreground(lipgloss.Color("12")),
-		DEBUG: lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
-	}
+	// Model is already properly initialized by NewUnifiedModel
 	
 	// Test with problematic widths
 	problematicWidths := []int{-10, -1, 0, 1, 2, 3, 4, 5}

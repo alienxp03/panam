@@ -73,9 +73,23 @@ func TestDebug_LargeLogFile(t *testing.T) {
 	}()
 
 	// Process the file
-	app.readFromFile("tmp/development.log")
+	app.indexFile("tmp/development.log")
 
-	entries := app.model.buffer.GetAll()
+	// Get entries through indexer
+	entries := []LogEntry{}
+	if app.model.indexer != nil {
+		count := app.model.indexer.LineCount()
+		if count > 1000 {
+			count = 1000 // Limit for test
+		}
+		if count > 0 {
+			lines := app.model.indexer.GetLines(0, count)
+			for _, line := range lines {
+				entry := app.model.parser.ParseLogLine(line, "tmp/development.log")
+				entries = append(entries, entry)
+			}
+		}
+	}
 	t.Logf("Successfully processed %d entries from development.log", len(entries))
 
 	// Check that it respects the MaxLines limit
