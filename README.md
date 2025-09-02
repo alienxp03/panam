@@ -1,34 +1,41 @@
 # Panam - Terminal Log Viewer
 
+![Panam Screenshot](docs/screenshot.png)
+
 Panam is a Terminal User Interface (TUI) application designed to view and filter log files in real-time. It provides an interactive interface for developers and system administrators to navigate through logs with powerful filtering capabilities.
 
 ## Features
 
 ### Ultra-Fast Performance
+
 - **Sub-1 second loading** for million-line files
 - **Virtual scrolling** with lazy parsing
 - **Minimal memory usage** - only loads visible content
 
 ### Enhanced Interface
-- **Two-panel layout**: 
+
+- **Two-panel layout**:
   - Left panel: Search filters and controls with visual indicators
   - Right panel: 3-column log display (TIME | LEVEL | MESSAGE)
 - **Real-time updates**: Live log streaming with instant UI refresh
 - **Detail view**: Press Enter to see full log entry with metadata
 
 ### Powerful Filtering
+
 - **Include/exclude patterns**: Comma-separated, with regex support
 - **Log level filtering**: Toggle ERROR, WARN, INFO, DEBUG levels
 - **Pattern highlighting**: Matches highlighted in search results
 - **Global shortcuts**: `/` for include, `\` for exclude filters
 
 ### Navigation & Controls
+
 - **Vim-style navigation**: j/k, Ctrl+d/u, gg/G
 - **Smart scrolling**: Half-page scrolling, jump to matches
 - **Edit mode**: `i` to edit, Esc to exit, Space to toggle
 - **Tab navigation**: Switch between panels seamlessly
 
 ### Format Support
+
 - **OTLP**: Full OpenTelemetry Log Protocol support
 - **Rails logs**: SQL timing, ANSI color handling
 - **Structured logs**: JSON, Apache/Nginx formats
@@ -72,6 +79,7 @@ tail -f /var/log/app.log | ./panam
 ### Keyboard Controls
 
 #### Navigation
+
 - `Tab`: Switch between left and right panels
 - `↑/k`: Move selection up
 - `↓/j`: Move selection down
@@ -79,6 +87,7 @@ tail -f /var/log/app.log | ./panam
 - `End`: Go to last entry
 
 #### Filtering (Quick Access)
+
 - `i`: Quick access to include filter input
 - `e`: Quick access to exclude filter input
 - `/`: Focus on include filter input (alternative)
@@ -89,6 +98,7 @@ tail -f /var/log/app.log | ./panam
 - `ESC` (in filter input): Cancel input and return to log view
 
 #### Actions
+
 - `Enter`: Show detailed view of selected log entry in right panel
 - `ESC/q`: Return to log stream from detail view
 - `q/Ctrl+C`: Quit application
@@ -96,24 +106,30 @@ tail -f /var/log/app.log | ./panam
 ## Log Format Support
 
 ### OTLP (OpenTelemetry Log Protocol)
+
 Supports full OTLP JSON format with:
+
 - Timestamp conversion from Unix nano
 - Severity level mapping
 - Attribute and metadata extraction
 - Resource information
 
 ### Rails Logs
+
 Automatically detects and parses Rails application logs:
+
 - SQL query timing extraction
 - ANSI color code handling
 - Automatic DEBUG level assignment for database operations
 
 ### Structured Logs
+
 - Apache/Nginx common log format
 - JSON structured logs
 - Custom timestamp extraction
 
 ### Plain Text
+
 - Automatic log level detection (ERROR, WARN, INFO, DEBUG)
 - Timestamp extraction from common formats
 - Fallback parsing for any text format
@@ -125,6 +141,7 @@ Automatically detects and parses Rails application logs:
 Panam achieves **sub-1 second loading** for million-line log files through an innovative architecture inspired by [lnav](https://github.com/tstack/lnav). The key innovation is **virtual scrolling with lazy parsing** - we only parse what's visible on screen.
 
 #### Performance Benchmarks
+
 - **1.2M lines (191MB file)**: Indexed in 95ms
 - **Line retrieval**: 293 microseconds for 100 lines
 - **Total startup**: <1 second (vs 20+ seconds with traditional approaches)
@@ -133,17 +150,20 @@ Panam achieves **sub-1 second loading** for million-line log files through an in
 ### Core Architecture Components
 
 1. **Fast Indexer** (`fast_indexer.go`)
+
    - Scans files in a single pass, storing only byte offsets
    - No parsing during indexing phase
    - Uses 256KB buffer for efficient I/O
    - Pre-allocates arrays based on file size estimation
 
 2. **Virtual Scrolling** (`unified_model.go`)
+
    - Only parses and renders visible lines (typically 40-50)
    - Lazy parsing on scroll events
    - Smooth scrolling through millions of lines
 
 3. **Smart Caching**
+
    - 5000 entry LRU cache for parsed lines
    - Batch retrieval for consecutive line ranges
    - Cache-aware scrolling algorithms
@@ -217,6 +237,7 @@ go test -bench=. -v
 ## Development
 
 The codebase follows Go best practices:
+
 - Comprehensive test coverage
 - Benchmarks for performance-critical components
 - Clean separation of concerns
@@ -233,7 +254,7 @@ The codebase follows Go best practices:
 
 ```bash
 make build          # Build panam
-make test           # Run tests  
+make test           # Run tests
 make demo           # Show help and validate build
 make run            # Get instructions for running with sample logs
 make help           # See all options
@@ -248,3 +269,4 @@ make help           # See all options
 ## License
 
 [Add your license information here]
+
