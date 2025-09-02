@@ -1,4 +1,4 @@
-module panam
+module github.com/alienxp03/panam
 
 go 1.25.0
 
