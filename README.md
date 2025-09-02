@@ -238,10 +238,7 @@ go test -bench=. -v
 
 The codebase follows Go best practices:
 
-- Comprehensive test coverage
-- Benchmarks for performance-critical components
-- Clean separation of concerns
-- Extensive documentation
+- For testing, we can laverage on `tmux capture-pane` to record the output of the application in a terminal.
 
 ### Contributing
 
@@ -269,4 +266,3 @@ make help           # See all options
 ## License
 
 [Add your license information here]
-

@@ -10,9 +10,8 @@ build:
 # Run the application with example file (requires interactive terminal)
 run: build
 	@echo "Note: This requires an interactive terminal (TTY)"
-	@echo "Run this command in your terminal: ./panam -e tmp/small_test.log"
-	@echo "Or try: head -50 tmp/test.log | ./panam"
-	./panam -e tmp/small_test.log
+	@echo "Monitoring tmp/test.log with 1-second refresh..."
+	./panam -e tmp/test.log -r 1
 
 # Run with piped input (example)
 pipe: build
@@ -40,7 +39,7 @@ demo: build
 	@echo ""
 	@echo "=== Build successful! ==="
 	@echo "To use interactively, run in your terminal:"
-	@echo "  ./panam -e tmp/small_test.log"
+	@echo "  ./panam -e tmp/test.log"
 	@echo "  head -100 tmp/test.log | ./panam"
 
 # Install dependencies

@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# Logger script that randomly logs hardcoded sentences to tmp/test.log
+
+set -e
+
+# Create tmp/test.log if it doesn't exist
+mkdir -p tmp
+touch tmp/test.log
+
+# Hardcoded sentences from development.log
+sentences=(
+    "(20250424073818),"
+    "  [1m[36mPermission Update (0.1ms)[0m  [1m[33mUPDATE \"permissions\" SET \"description\" = \$1 WHERE \"permissions\".\"id\" = \$2[0m  [[\"description\", \"\"], [\"id\", 239]]"
+    "  REFERENCES \"riders\" (\"id\")"
+    "  ↳ lib/tasks/core.rake:9:in \`block (2 levels) in <main>'"
+    "  [1m[36mVehicleType Create (0.1ms)[0m  [1m[32mINSERT INTO \"vehicle_types\" (\"name\", \"created_at\", \"updated_at\") VALUES (\$1, \$2, \$3) RETURNING \"id\"[0m  [[\"name\", \"Test 538\"], [\"created_at\", \"2024-06-20 00:11:12.851577\"], [\"updated_at\", \"2024-06-20 00:11:12.851577\"]]"
+    "  [1m[36mTRANSACTION (0.1ms)[0m  [1m[35mBEGIN[0m"
+    "  ↳ lib/tasks/core.rake:9:in \`block (2 levels) in <main>'"
+    "  ↳ app/models/order.rb:1379:in \`log_status_change'"
+    "  [1m[35m (0.4ms)[0m  [1m[35mDROP TABLE IF EXISTS \"roles\" CASCADE[0m"
+    "  [1m[36mTRANSACTION (0.1ms)[0m  [1m[35mBEGIN[0m"
+    "[ActiveJob] Enqueued ActiveStorage::AnalyzeJob (Job ID: 8b756331-de1b-4354-a3b1-ba60f3a2dae9) to Sidekiq(default) with arguments: #<GlobalID:0x000000011d29e8e8 @uri=#<URI::GID gid://bateriku/ActiveStorage::Blob/46>>"
+)
+
+echo "Starting logger - appending to tmp/test.log every second..."
+echo "Press Ctrl+C to stop"
+
+# Main logging loop
+while true; do
+    # Pick a random sentence from our array of 10
+    random_index=$((RANDOM % 10))
+    selected_sentence="${sentences[$random_index]}"
+
+    # Append to test.log with timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $selected_sentence" >> tmp/test.log
+
+    # Wait 1 second
+    sleep 1
+done

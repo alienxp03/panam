@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ type UnifiedModel struct {
 	rightWidth      int
 	tailing         bool
 	lastGPress      int64
+	fullscreen      bool
 	
 	// Filter inputs
 	includeInput    textinput.Model
@@ -66,6 +68,8 @@ type UnifiedModel struct {
 	indexing        bool
 	indexTime       time.Duration
 	loadingFile     string
+	lastModTime     time.Time
+	tickCounter     int
 	
 	// Styles
 	focusedStyle    lipgloss.Style
@@ -181,6 +185,14 @@ func (m *UnifiedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.indexer != nil && !m.indexing && len(m.visibleEntries) == 0 {
 			m.loadVisibleLines()
 		}
+		
+		// Check for file changes every few ticks (based on RefreshRate)
+		m.tickCounter++
+		refreshInterval := m.config.RefreshRate * 20 // 20 ticks per second (50ms per tick)
+		if refreshInterval > 0 && m.tickCounter%refreshInterval == 0 && m.config.Files != nil && len(m.config.Files) > 0 {
+			m.checkFileChanges()
+		}
+		
 		return m, m.tickCmd()
 		
 	case tea.KeyMsg:
@@ -241,6 +253,19 @@ func (m *UnifiedModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeInput = &m.excludeInput
 			m.excludeInput.Focus()
 			return m, textinput.Blink
+			
+		case "f":
+			m.fullscreen = !m.fullscreen
+			// When entering fullscreen, focus on right panel and recalculate widths
+			if m.fullscreen {
+				m.focus = RightPanel
+				m.rightWidth = m.width
+			} else {
+				// When exiting fullscreen, restore original widths
+				m.leftWidth = 40
+				m.rightWidth = m.width - m.leftWidth
+			}
+			return m, nil
 		}
 
 		// Navigation based on focus
@@ -270,7 +295,7 @@ func (m *UnifiedModel) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "j", "down":
 		if !m.editMode {
 			m.leftPanelItem++
-			if m.leftPanelItem > 7 {
+			if m.leftPanelItem > 8 {
 				m.leftPanelItem = 0
 			}
 		}
@@ -280,7 +305,7 @@ func (m *UnifiedModel) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.editMode {
 			m.leftPanelItem--
 			if m.leftPanelItem < 0 {
-				m.leftPanelItem = 7
+				m.leftPanelItem = 8
 			}
 		}
 		return m, nil
@@ -319,6 +344,11 @@ func (m *UnifiedModel) updateLeftPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 7:
 			m.showDebug = !m.showDebug
 			m.applyFilters()
+		case 8:
+			m.tailing = !m.tailing
+			if m.tailing {
+				m.scrollToBottom()
+			}
 		}
 		return m, nil
 	}
@@ -346,28 +376,34 @@ func (m *UnifiedModel) updateRightPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 		
 	case "j", "down":
+		m.tailing = false  // Auto-pause tailing when navigating
 		m.scrollDown()
 		return m, nil
 		
 	case "k", "up":
+		m.tailing = false  // Auto-pause tailing when navigating
 		m.scrollUp()
 		return m, nil
 		
 	case "ctrl+d":
+		m.tailing = false  // Auto-pause tailing when navigating
 		m.scrollHalfPageDown()
 		return m, nil
 		
 	case "ctrl+u":
+		m.tailing = false  // Auto-pause tailing when navigating
 		m.scrollHalfPageUp()
 		return m, nil
 		
 	case "G":
+		m.tailing = false  // Auto-pause tailing when navigating
 		m.scrollToBottom()
 		return m, nil
 		
 	case "g":
 		now := time.Now().UnixNano()
 		if now-m.lastGPress < 500000000 {
+			m.tailing = false  // Auto-pause tailing when navigating
 			m.scrollToTop()
 		}
 		m.lastGPress = now
@@ -400,9 +436,6 @@ func (m *UnifiedModel) View() string {
 	// Build header
 	header := m.renderHeader()
 	
-	// Build panels
-	leftPanel := m.renderLeftPanel()
-	
 	// Right panel changes based on view mode
 	var rightPanel string
 	if m.viewMode == DetailView {
@@ -411,8 +444,15 @@ func (m *UnifiedModel) View() string {
 		rightPanel = m.renderRightPanel()
 	}
 	
-	// Join panels
-	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	var panels string
+	if m.fullscreen {
+		// In fullscreen mode, only show the right panel
+		panels = rightPanel
+	} else {
+		// Normal mode, show both panels
+		leftPanel := m.renderLeftPanel()
+		panels = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	}
 
 	// Combine everything
 	return lipgloss.JoinVertical(lipgloss.Left, header, panels)
@@ -523,6 +563,19 @@ func (m *UnifiedModel) renderLeftPanel() string {
 		}
 		content.WriteString(fmt.Sprintf("[%s] %s\n", checkbox(level.enabled), level.name))
 	}
+	
+	// Live streaming toggle
+	content.WriteString("\nStreaming:\n")
+	if m.leftPanelItem == 8 && m.focus == LeftPanel {
+		content.WriteString("▶ ")
+	} else {
+		content.WriteString("  ")
+	}
+	liveIcon := "🔴"
+	if m.tailing {
+		liveIcon = "🟢"
+	}
+	content.WriteString(fmt.Sprintf("[%s] %s Live Stream\n", checkbox(m.tailing), liveIcon))
 	
 	// Files section at the bottom
 	if m.loadingFile != "" {
@@ -1181,4 +1234,69 @@ func (m *UnifiedModel) formatLogEntryColumns(entry LogEntry, width int) string {
 		message)
 	
 	return formatted
+}
+
+// checkFileChanges monitors the file for changes and re-indexes if modified
+func (m *UnifiedModel) checkFileChanges() {
+	if m.config.Files == nil || len(m.config.Files) == 0 {
+		return
+	}
+	
+	filename := m.config.Files[0] // Check first file for now
+	stat, err := os.Stat(filename)
+	if err != nil {
+		return // File might not exist
+	}
+	
+	modTime := stat.ModTime()
+	
+	// If this is the first check or file has been modified
+	if m.lastModTime.IsZero() || modTime.After(m.lastModTime) {
+		m.lastModTime = modTime
+		
+		// Only re-index if this isn't the first check (avoid duplicate indexing on startup)
+		if !m.lastModTime.IsZero() && m.indexer != nil {
+			m.reindexFile(filename)
+		}
+	}
+}
+
+// reindexFile re-indexes a file when it changes
+func (m *UnifiedModel) reindexFile(filename string) {
+	if m.indexing {
+		return // Already indexing
+	}
+	
+	// Close old indexer
+	if m.indexer != nil {
+		m.indexer.Close()
+	}
+	
+	// Create new indexer
+	indexer, err := NewFastIndexer(filename, m.parser)
+	if err != nil {
+		return
+	}
+	
+	// Start indexing in background
+	go func() {
+		m.indexing = true
+		m.loadingFile = filename
+		
+		start := time.Now()
+		if err := indexer.IndexFileUltraFast(); err != nil {
+			indexer.Close()
+			m.indexing = false
+			return
+		}
+		
+		// Update model with new indexer
+		m.indexTime = time.Since(start)
+		m.SetIndexer(indexer, filename)
+		
+		// Scroll to bottom if tailing is enabled
+		if m.tailing && len(m.filteredIndices) > 0 {
+			m.scrollToBottom()
+		}
+	}()
 }
